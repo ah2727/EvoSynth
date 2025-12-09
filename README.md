@@ -29,7 +29,20 @@ git clone https://github.com/dongdongunique/EvoSynth.git
 cd EvoSynth
 pip install -r requirements.txt
 ```
+## Create an .env file
+```bash
+OPENAI_KEY="YOUR-KEY"
+OPENAI_API_KEY="YOUR-KEY"
+OPENAI_BASE_URL="YOUR-URL"
 
+
+LANGFUSE_PUBLIC_KEY="YOUR-KEY"
+LANGFUSE_SECRET_KEY="YOUR-KEY"
+LANGFUSE_HOST="https://cloud.langfuse.com"
+
+DEFAULT_MODEL="deepseek-chat"
+OPENAI_MODEL="deepseek-chat"
+```
 ## Quick Start
 
 ### Environment Setup
@@ -152,6 +165,12 @@ Results are evaluated using:
 - **LLM Judge**: Scores responses on a 1-5 scale. Prompts are from ActorAttack.
 - **Success Threshold**: Score >= 5 indicates successful jailbreak
 
+## TODO
+
+- [x] **Phase 1: Framework Development** - Core architecture and multi-agent system implementation
+- [ ] **Phase 2: SOTA LLM Testing** - Evaluating framework against recent released state-of-the-art LLMs (GPT-5.1, GEMINI 3.0 Pro, Claude 4.5 Opus etc.)
+- [ ] **Phase 3: Dataset Curation** - Filtering and curating generated attack results to create a new research dataset
+
 ## Ethical Disclaimer
 
 **For Defensive Security Research Only.**
@@ -181,4 +200,4 @@ If you use EvoSynth in your research, please cite:
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
+Contributions are welcome! 

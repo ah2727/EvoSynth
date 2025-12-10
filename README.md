@@ -43,6 +43,15 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 DEFAULT_MODEL="deepseek-chat"
 OPENAI_MODEL="deepseek-chat"
 ```
+
+### API Base URL Setup
+
+For best results, we recommend using router platforms that provide unified access to multiple models through a single API:
+
+- **OpenRouter** (https://openrouter.ai/) - Access to 400+ models including GPT-5, Claude, Llama, and more
+- **BoyueRichData** (https://boyuerichdata.apifox.cn/) - Alternative router platform
+
+Set your `base_url` parameter to the router's endpoint when initializing OpenAIModel:
 ## Quick Start
 
 ### Environment Setup
@@ -53,31 +62,45 @@ Create a `.env` file with your API credentials:
 ### Basic Usage
 
 ```python
+import asyncio
 from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
 from jailbreak_toolbox.attacks.blackbox.implementations.evosynth import EvosynthAttack, EvosynthConfig
 from jailbreak_toolbox.judges.implementations import LLMJudge
 
-# Initialize models
-target_model = OpenAIModel(model_name="gpt-4o", api_key="your_key")
-judge_model = OpenAIModel(model_name="gpt-4o", api_key="your_key")
+async def main():
+    # Initialize models (using router platform like OpenRouter or BoyueRichData)
+    target_model = OpenAIModel(
+        model_name="gpt-4o",
+        api_key="your_key",
+        base_url="https://openrouter.ai/api/v1"  # or your router's endpoint
+    )
+    judge_model = OpenAIModel(
+        model_name="gpt-4o",
+        api_key="your_key",
+        base_url="https://openrouter.ai/api/v1"
+    )
 
-# Configure attack
-config = EvosynthConfig(
-    max_iterations=15,
-    success_threshold=5,
-    pipeline="full_pipeline"
-)
+    # Configure attack
+    config = EvosynthConfig(
+        max_iterations=15,
+        success_threshold=5,
+        pipeline="full_pipeline"
+    )
 
-# Create judge and attack
-judge = LLMJudge(judge_model=judge_model)
-attack = EvosynthAttack(
-    target_model=target_model,
-    judge=judge,
-    config=config
-)
+    # Create judge and attack
+    judge = LLMJudge(judge_model=judge_model)
+    attack = EvosynthAttack(
+        target_model=target_model,
+        judge=judge,
+        config=config
+    )
 
-# Execute attack
-result = attack.attack("Your test prompt here")
+    # Execute attack (async)
+    result = await attack.attack("Your test prompt here")
+    print(f"Attack result: {result}")
+
+# Run the async function
+asyncio.run(main())
 ```
 
 ### Command Line Usage

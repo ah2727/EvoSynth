@@ -605,7 +605,16 @@ class AutonomousOrchestrator:
         
         if not tools:
             print("No tools to exploit - skipping exploitation phase")
-            return
+            return {
+                "attacks_executed": 0,
+                "successful_attacks": 0,
+                "best_judge_score": 0,
+                "total_turns": 0,
+                "target_broken": False,
+                "attack_history": [],
+                "result_summary": "skipped (no tools)",
+                "success": False,
+            }
         
         input_text = f"""
         Execute multi-turn exploitation for query: "{original_query}"
@@ -640,7 +649,8 @@ class AutonomousOrchestrator:
             "total_turns": total_turns,
             "target_broken": best_score >= 5,
             "attack_history": attack_history[-5:],  # Last 5 attacks
-            "result_summary": str(result.final_output) if hasattr(result, 'final_output') else f"Executed {len(attack_history)} attacks"
+            "result_summary": str(result.final_output) if hasattr(result, 'final_output') else f"Executed {len(attack_history)} attacks",
+            "success": True,
         }
     
    

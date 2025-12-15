@@ -19,14 +19,18 @@ import argparse
 try:
     # Prefer the concrete async client-backed model
     from jailbreak_toolbox.models.implementations.async_openai_model import AsyncOpenAIModel as OpenAIModel
+    from jailbreak_toolbox.models.implementations.ollama_model import OllamaModel
 except Exception:
-    pass
+    raise
 try:
     # Prefer the concrete async client-backed model
     from jailbreak_toolbox.models.implementations.async_openai_model import AsyncOpenAIModel as OpenAIModel
 except Exception:
     # Fallback to legacy model if import fails
-    from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
+    try:
+        from jailbreak_toolbox.models.implementations.async_openai_model import AsyncOpenAIModel as OpenAIModel
+    except Exception:
+        from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
 from jailbreak_toolbox.datasets.implementations.static_dataset import StaticDataset
 from jailbreak_toolbox.attacks.blackbox.implementations.evosynth.evosynth_attack import (
     EvosynthAttack,
@@ -118,15 +122,26 @@ def timestamp_str():
 
 
 def make_openai_model_from_config(cfg: Dict[str, Any], api_key: str, base_url: str) -> OpenAIModel:
+    model_name = cfg["model_name"]
+    resolved_base_url = cfg.get("base_url", base_url)
+    resolved_api_key = cfg.get("api_key", api_key)
+
+    # If targeting Ollama (host provided or model name prefixed), use OllamaModel
+    if (resolved_base_url and ("ollama" in resolved_base_url or "localhost:11434" in resolved_base_url)) or model_name.lower().startswith("ollama/"):
+        return OllamaModel(
+            model_name=model_name.split("/", 1)[-1] if model_name.lower().startswith("ollama/") else model_name,
+            host=resolved_base_url,
+            temperature=cfg.get("temperature", 0.0),
+        )
+
     return OpenAIModel(
-        api_key=cfg.get("api_key", api_key),
-        base_url=cfg.get("base_url", base_url),
-        model_name=cfg["model_name"],
+        api_key=resolved_api_key,
+        base_url=resolved_base_url,
+        model_name=model_name,
         max_tokens=cfg.get("max_tokens", None),
         temperature=cfg.get("temperature", 0.0),
         retry_attempts=5,
         retry_delay=1
-        
     )
 
 
@@ -359,6 +374,15 @@ def process_wrapper(model_config: Dict[str, Any], attack_data: tuple, args_dict:
     import os
     from pathlib import Path
 
+    # If running in Ollama mode, strip remote API keys to avoid accidental OpenAI calls
+    is_ollama = ("ollama" in (args_dict.get("base_url") or "")) or ("localhost:11434" in (args_dict.get("base_url") or "")) \
+        or str(args_dict.get("attacker_model", "")).lower().startswith("ollama/")
+    if is_ollama:
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ.pop("AIML_API_KEY", None)
+        if args_dict.get("base_url"):
+            os.environ["OPENAI_BASE_URL"] = args_dict["base_url"]
+
     # Ensure repo root on sys.path (adjust if needed)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -385,12 +409,20 @@ def process_wrapper(model_config: Dict[str, Any], attack_data: tuple, args_dict:
         "model_name": args.judge_model,
         "temperature": 0.0,
     }
-    judge_model = OpenAIModel(
-        api_key=args.api_key,
-        base_url=args.base_url,
-        model_name=judge_model_config["model_name"],
-        temperature=judge_model_config["temperature"],
-    )
+    # Select OllamaModel when base_url is Ollama or model prefixed with ollama/
+    if (args.base_url and ("ollama" in args.base_url or "localhost:11434" in args.base_url)) or args.judge_model.lower().startswith("ollama/"):
+        judge_model = OllamaModel(
+            model_name=args.judge_model.split("/", 1)[-1] if args.judge_model.lower().startswith("ollama/") else args.judge_model,
+            host=args.base_url,
+            temperature=judge_model_config["temperature"],
+        )
+    else:
+        judge_model = OpenAIModel(
+            api_key=args.api_key,
+            base_url=args.base_url,
+            model_name=judge_model_config["model_name"],
+            temperature=judge_model_config["temperature"],
+        )
 
     judge = LLMJudge(
         judge_model=judge_model,

@@ -132,15 +132,23 @@ class AsyncOrchestrator:
             print("Warning: openai/agents not installed; EvosynthAttack disabled:", e)
 
         # Setup OpenAI client
-        api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
-        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        api_key = self.config.openai_api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST")
 
-        external_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=30000000,
-        )
-        set_default_openai_client(external_client)
+        if (not base_url or "localhost" not in base_url) and not api_key:
+            raise ValueError("OpenAI/AIML base_url provided without API key. Set AIML_API_KEY/OPENAI_API_KEY.")
+
+        # If using local Ollama, skip setting default OpenAI client
+        if base_url and ("localhost:11434" in base_url or "ollama" in base_url):
+            external_client = None
+        else:
+            client_kwargs = {"timeout": 30000000}
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            external_client = AsyncOpenAI(**client_kwargs)
+            set_default_openai_client(external_client)
 
         # Setup Langfuse tracing if enabled
         langfuse_client = None

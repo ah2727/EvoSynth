@@ -51,7 +51,7 @@ class EvosynthConfig:
     target_model_name: Optional[str] = None
     judge_model_name: Optional[str] = None
     # Model configuration
-    attack_model_base: str = "gpt-5.2"
+    attack_model_base: str = "ollama/gpt-oss:120b-cloud"
     openai_api_key: Optional[str] = None
     base_url: Optional[str] = None
     logs_dir: Optional[str] = None
@@ -110,17 +110,62 @@ class EvosynthAttack(BaseAttack):
     def _setup_orchestrator(self):
         """Setup the autonomous orchestrator with proper configuration like the original."""
 
-        # Setup OpenAI client
-        api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
-        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL", "https://api.aimlapi.com/v1")
+        # Setup OpenAI client (allow environment to control base_url/api_key)
+        api_key = self.config.openai_api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST")
 
-        external_client = OpenAIModel(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=30000000,
+        if (not base_url or "localhost" not in base_url) and not api_key:
+            raise ValueError("OpenAI/AIML base_url provided without API key. Set AIML_API_KEY/OPENAI_API_KEY.")
 
-        )
-        set_default_openai_client(external_client)
+        # If pointing at local Ollama, register a compat client so agents never hit OpenAI
+        if base_url and ("localhost:11434" in base_url or "ollama" in base_url):
+            import openai
+            openai.api_key = ""  # clear any env key that would trigger OpenAI calls
+            openai.base_url = base_url
+
+            class _OllamaCompatClient:
+                def __init__(self, host):
+                    self.host = host.rstrip("/")
+                    self.api_key = ""
+                    self.base_url = self.host
+                    class Chat:
+                        def __init__(self, outer):
+                            class Completions:
+                                def __init__(self, outer):
+                                    self.outer = outer
+                                def create(self, model=None, messages=None, **kwargs):
+                                    import requests
+                                    payload = {
+                                        "model": model,
+                                        "messages": messages or [],
+                                        "stream": False,
+                                        "options": {}
+                                    }
+                                    resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
+                                    resp.raise_for_status()
+                                    data = resp.json()
+                                    content = data.get("message", {}).get("content", "")
+                                    class _Msg: pass
+                                    m = _Msg(); m.content = content
+                                    class _Choice: pass
+                                    c = _Choice(); c.message = m
+                                    class _Resp: pass
+                                    r = _Resp(); r.choices = [c]
+                                    return r
+                            self.completions = Completions(outer)
+                    self.chat = Chat(self)
+
+            external_client = _OllamaCompatClient(base_url or "http://localhost:11434")
+        else:
+            client_kwargs = {"timeout": 30000000}
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            external_client = AsyncOpenAI(**client_kwargs)
+        # Only register default client when we actually have one (skip in Ollama mode)
+        if external_client:
+            set_default_openai_client(external_client)
 
         # Setup Langfuse tracing if enabled
         langfuse_client = None

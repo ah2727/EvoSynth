@@ -1,0 +1,71 @@
+{
+  "type": "api",
+  "name": "ollama_local",
+  "description": "Generate completions from a locally running Ollama instance (no authentication required).",
+  "base_url": "http://127.0.0.1:11434/api",
+  "auth": {
+    "type": "none"
+  },
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/generate",
+      "description": "Generate text from a model.",
+      "request_schema": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Model name, e.g. \"gpt-oss:120b-cloud\"."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Prompt you want the model to complete."
+          },
+          "options": {
+            "type": "object",
+            "description": "Optional generation options (temperature, etc.)",
+            "additionalProperties": true
+          }
+        },
+        "required": ["model", "prompt"]
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "response": { "type": "string", "description": "Generated text." },
+          "model":    { "type": "string" },
+          "created_at": { "type": "string" },
+          "done": { "type": "boolean" }
+        },
+        "required": ["response"]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/tags",
+      "description": "List all models currently known to the local Ollama server.",
+      "request_schema": { "type": "object" },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "model": { "type": "string" },
+                "size": { "type": "integer" },
+                "digest": { "type": "string" },
+                "details": { "type": "object", "additionalProperties": true }
+              },
+              "required": ["name", "model"]
+            }
+          }
+        },
+        "required": ["models"]
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from PIL import Image
 import os
 import asyncio
 from functools import partial
+from datetime import datetime
 
 @model_registry.register("openai")
 class OpenAIModel(BaseModel):
@@ -17,7 +18,7 @@ class OpenAIModel(BaseModel):
     Supports various OpenAI models like gpt-3.5-turbo and gpt-4.
     """
     def __init__(self,
-                 api_key: str,
+                 api_key: Optional[str] = None,
                  base_url: Optional[str] = None,
                  model_name: str = "openai/gpt-5-2",
                  temperature: float = 0.7,
@@ -42,6 +43,10 @@ class OpenAIModel(BaseModel):
             embedding_model: Model to use for generating embeddings
         """
         super().__init__(**kwargs)
+        # Prefer explicit key, else AIML_API_KEY, else OPENAI_API_KEY, else empty (for local ollama)
+        self.api_key = api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        # Prefer explicit base_url, else env (OPENAI_BASE_URL then OLLAMA_HOST), else aiml default
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST") or "https://api.aimlapi.com/v1"
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -49,7 +54,10 @@ class OpenAIModel(BaseModel):
         self.retry_delay = retry_delay
         self.system_message = system_message
         self.embedding_model = embedding_model
-        self.api_key = api_key
+        self._log_path = os.getenv("OPENAI_LOG_PATH")
+        # Fail fast for remote endpoints if no API key provided
+        if (not self.base_url or "localhost" not in self.base_url) and not self.api_key:
+            raise ValueError("API key is required for non-local OpenAI-compatible endpoints. Set AIML_API_KEY or OPENAI_API_KEY.")
 
         # Initialize conversation history
         self.conversation_history = [{"role": "system", "content": system_message}]
@@ -61,11 +69,10 @@ class OpenAIModel(BaseModel):
         self.use_responses = True  # try Responses API first when possible
 
         # Configure OpenAI client
-        openai.api_key = api_key
-
+        openai.api_key = self.api_key
         # Normalize base_url so callers can pass either root or /v1
-        if base_url:
-            normalized_base_url = base_url.rstrip("/")
+        if self.base_url:
+            normalized_base_url = self.base_url.rstrip("/")
             if not normalized_base_url.endswith("v1"):
                 normalized_base_url = f"{normalized_base_url}/v1"
             openai.base_url = normalized_base_url
@@ -73,7 +80,8 @@ class OpenAIModel(BaseModel):
             normalized_base_url = "https://api.openai.com/v1"
         self.base_url = normalized_base_url
 
-        self.client = openai.OpenAI()
+        # Ensure client is created with explicit base_url so calls hit the intended host
+        self.client = openai.OpenAI(base_url=self.base_url, api_key=self.api_key)
 
         class _AsyncChatProxy:
             def __init__(self, chat_obj):
@@ -88,6 +96,18 @@ class OpenAIModel(BaseModel):
         # Provide chat shortcut expected by some utilities (awaitable even for sync client)
         self.chat = _AsyncChatProxy(self.client.chat)
         print(f"Initialized OpenAI model: {model_name}")
+
+    def _log_session(self, role: str, content: Any):
+        """Best-effort append-only session logging."""
+        if not self._log_path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._log_path), exist_ok=True)
+            with open(self._log_path, "a", encoding="utf-8") as f:
+                ts = datetime.utcnow().isoformat()
+                f.write(f"{ts} [{role}] {content}\n")
+        except Exception:
+            pass
 
     def _filter_client_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Filter kwargs suitable for OpenAI client initialization"""
@@ -269,6 +289,8 @@ class AimlAPIModel(OpenAIModel):
                         if resp.output and resp.output[0].content:
                             first = resp.output[0].content[0]
                             response_text = getattr(first, "text", str(first))
+                            self._log_session("user", messages)
+                            self._log_session("assistant", response_text)
                             if maintain_history:
                                 self.add_assistant_message(response_text)
                             return response_text
@@ -280,6 +302,8 @@ class AimlAPIModel(OpenAIModel):
                 response = self.client.chat.completions.create(**chat_params)
                 
                 response_text = response.choices[0].message.content
+                self._log_session("user", messages)
+                self._log_session("assistant", response_text)
                 
                 # Add assistant response to history if maintaining history
                 if maintain_history:

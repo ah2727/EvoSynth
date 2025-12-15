@@ -165,6 +165,19 @@ class ToolCreationAgent(Agent):
         )
         self.config = config
         self.ai_tool_system_available = AI_TOOL_SYSTEM_AVAILABLE
+        # Patch tool lookup to ignore channel suffixes sometimes produced by LLMs
+        for attr in ("get_tool_by_name", "_get_tool_by_name"):
+            if hasattr(self, attr):
+                orig = getattr(self, attr)
+
+                def _patched(name, _orig=orig):
+                    sanitized = name.split("<", 1)[0].strip()
+                    try:
+                        return _orig(name)
+                    except Exception:
+                        return _orig(sanitized)
+
+                setattr(self, attr, _patched)
 
 
 # Simple debug helper to trace execution context when async issues occur

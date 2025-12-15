@@ -10,6 +10,7 @@ import asyncio
 from pprint import pformat
 
 from agents import Agent, function_tool, RunContextWrapper, OpenAIChatCompletionsModel, trace
+import requests
 
 
 from .master_coordinator_agent import MasterCoordinatorAgent
@@ -35,6 +36,8 @@ class AutonomousOrchestrator:
         self.agents = {}
         self.context = None
         self.session_id = str(uuid.uuid4())
+        model_dir = getattr(config.get('target_model', None), "model_name", "unknown_model") if isinstance(config, dict) else getattr(getattr(self, "model", None), "model_name", "unknown_model")
+        self.success_log_base = f"/Users/ah/Documents/EvoSynth/async_logs/{model_dir}/EvosynthAttack"
         
         # Use injected logs_dir or default
         self.logs_dir = config['logs_dir']
@@ -53,20 +56,69 @@ class AutonomousOrchestrator:
             self.data_saver = SimpleDataSaver(base_path=self.logs_dir)
         
         # Set up OpenAI model for agents
-        if 'openai_client' in config:
+        # Decide OpenAI vs Ollama mode
+        no_api_key = not os.getenv("OPENAI_API_KEY") and not os.getenv("AIML_API_KEY") and not config.get("openai_api_key")
+        base_url_env = os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST") or ""
+        using_ollama = ("ollama" in base_url_env) or ("localhost:11434" in base_url_env)
+
+        if using_ollama or (no_api_key and config.get("openai_client") is None):
+            # Provide a lightweight OpenAI-compatible client that calls Ollama /api/chat
+            class _OllamaCompatClient:
+                def __init__(self, host):
+                    self.host = host.rstrip("/")
+                    self.api_key = ""
+                    self.base_url = self.host
+                    class Chat:
+                        def __init__(self, outer):
+                            class Completions:
+                                def __init__(self, outer):
+                                    self.outer = outer
+                                def create(self, model=None, messages=None, **kwargs):
+                                    payload = {
+                                        "model": model,
+                                        "messages": messages or [],
+                                        "stream": False,
+                                        "options": {}
+                                    }
+                                    resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
+                                    resp.raise_for_status()
+                                    data = resp.json()
+                                    content = data.get("message", {}).get("content", "")
+                                    class _Msg: pass
+                                    m = _Msg(); m.content = content
+                                    class _Choice: pass
+                                    c = _Choice(); c.message = m
+                                    class _Resp: pass
+                                    r = _Resp(); r.choices = [c]
+                                    return r
+                            self.completions = Completions(outer)
+                    self.chat = Chat(self)
+            compat_client = _OllamaCompatClient(base_url_env or "http://localhost:11434")
             self.openai_model = OpenAIChatCompletionsModel(
-                model=config.get('model_objects', {}).get('attack_model_base', 'deepseek-chat'),
-                openai_client=config['openai_client'],
-                
+                model=config.get('model_objects', {}).get('attack_model_base', 'ollama'),
+                openai_client=compat_client,
             )
+            config['openai_client'] = compat_client
+            print("Ollama-only mode: using OpenAIChatCompletionsModel with OllamaCompatClient.")
         else:
-            # Fallback to default
-            from agents import set_default_openai_client
-            self.openai_model = OpenAIChatCompletionsModel(
-                model=config.get('model_objects', {}).get('attack_model_base', 'deepseek-chat'),
-                openai_client=set_default_openai_client,
-               
-            )
+            if config.get('openai_client'):
+                self.openai_model = OpenAIChatCompletionsModel(
+                    model=config.get('model_objects', {}).get('attack_model_base', 'deepseek-chat'),
+                    openai_client=config['openai_client'],
+                    
+                )
+            else:
+                # Fallback to default
+                from agents import set_default_openai_client
+                if set_default_openai_client is None:
+                    self.openai_model = None
+                    print("No OpenAI client configured; skipping OpenAIChatCompletionsModel (using target model directly).")
+                else:
+                    self.openai_model = OpenAIChatCompletionsModel(
+                        model=config.get('model_objects', {}).get('attack_model_base', 'deepseek-chat'),
+                        openai_client=set_default_openai_client,
+                       
+                    )
         
         # Update config with the model for agents
         self.config['model_objects']['openai_model'] = self.openai_model
@@ -385,6 +437,23 @@ class AutonomousOrchestrator:
                     session_results["successful_queries"].append(original_query)
                     session_results["overall_successful"] = True
                     print(f"\n✅ QUERY SUCCESSFULLY COMPLETED: '{original_query}'")
+                    # Log successful attack to requested path
+                    try:
+                        import os, json
+                        os.makedirs(self.success_log_base, exist_ok=True)
+                        log_path = os.path.join(self.success_log_base, f"query{query_idx + 1}")
+                        payload = {
+                            "query_index": query_idx + 1,
+                            "query": original_query,
+                            "best_score": exploit_result.get("best_judge_score", 0) if 'exploit_result' in locals() else None,
+                            "coordinator_decision": query_session_results["coordinator_decisions"][-1] if query_session_results["coordinator_decisions"] else {},
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        with open(log_path, "w", encoding="utf-8") as f:
+                            json.dump(payload, f, ensure_ascii=False, indent=2)
+                        print(f"📄 Success logged to {log_path}")
+                    except Exception as log_err:
+                        print(f"⚠️ Could not log success: {log_err}")
                 else:
                     session_results["failed_queries"].append(original_query)
                     print(f"\n❌ QUERY FAILED: '{original_query}'")

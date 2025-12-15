@@ -10,7 +10,6 @@ class BaseModel(ABC):
         """允许在配置文件中传入任意模型特定的参数。"""
         pass
 
-    @abstractmethod
     def query(self, text_input: str, image_input: Any = None) -> str:
         """
         向模型发送查询并获取响应的核心方法。

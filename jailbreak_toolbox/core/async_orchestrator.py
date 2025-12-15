@@ -170,8 +170,8 @@ class AsyncOrchestrator:
             'openai_api_key': api_key,
             'openai_client': external_client,
             'model_objects': {
-                'attack_model_base': self.config.attack_model_base,
-                'judge_model_base': self.config.judge_model_name,
+                'attack_model_base': getattr(self.model, "model_name", self.config.attack_model_base),
+                'judge_model_base': getattr(self.judge_model, "model_name", self.config.judge_model_name),
                 # 'target_model_name': self.config.target_model_name,
                 # 'judge_model_name': self.config.judge_model_name,
                 'openai_model': None  # Will be set by orchestrator

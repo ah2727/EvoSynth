@@ -16,7 +16,17 @@ from dotenv import load_dotenv
 import asyncio
 import pandas as pd
 import argparse
-from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
+try:
+    # Prefer the concrete async client-backed model
+    from jailbreak_toolbox.models.implementations.async_openai_model import AsyncOpenAIModel as OpenAIModel
+except Exception:
+    pass
+try:
+    # Prefer the concrete async client-backed model
+    from jailbreak_toolbox.models.implementations.async_openai_model import AsyncOpenAIModel as OpenAIModel
+except Exception:
+    # Fallback to legacy model if import fails
+    from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
 from jailbreak_toolbox.datasets.implementations.static_dataset import StaticDataset
 from jailbreak_toolbox.attacks.blackbox.implementations.evosynth.evosynth_attack import (
     EvosynthAttack,
@@ -54,7 +64,7 @@ def parse_args():
                        default=os.getenv("OPENAI_API_KEY"),
                        help="OpenAI API key")
     parser.add_argument("--base-url", type=str,
-                       default=os.getenv("OPENAI_BASE_URL","https://api.openai.com/v1"),
+                       default=os.getenv("OPENAI_BASE_URL","https://api.aimlapi.com/v1"),
                        help="OpenAI-compatible API base URL")
 
     # Model parameters (non-attack specific)

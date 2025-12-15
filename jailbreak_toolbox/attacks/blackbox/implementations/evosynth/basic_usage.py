@@ -20,7 +20,7 @@ def basic_attack_example():
 
     # Initialize target model
     target_model = OpenAIModel(
-        model_name="gpt-4o-mini",
+        model_name="openai/gpt-5-2",
         temperature=0.7,
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL")

@@ -725,7 +725,7 @@ async def conduct_multi_turn_conversation(
         # Get attack model config from context or .env
         attack_model_config = getattr(ctx.context, 'attack_model_config', {
             'api_key': os.environ.get('OPENAI_API_KEY', ''),
-            'model_name': os.environ.get('OPENAI_MODEL', 'deepseek-chat'),
+            'model_name': os.environ.get('OPENAI_MODEL', 'openai/gpt-5-2'),
             'temperature': float(os.environ.get('OPENAI_TEMPERATURE', '0.7')),
             "base_url": os.environ.get("OPENAI_BASE_URL"),
         })
@@ -750,7 +750,7 @@ async def conduct_multi_turn_conversation(
                 normalized_base = f"{normalized_base}/v1"
             attack_model_config['base_url'] = normalized_base
         else:
-            attack_model_config['base_url'] = "https://api.openai.com/v1"
+            attack_model_config['base_url'] = "https://api.aimlapi.com/v1"
 
         # Ensure an API key exists; fail fast with a clear message instead of cryptic connection errors.
         api_key = attack_model_config.get('api_key')

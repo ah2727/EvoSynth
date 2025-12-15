@@ -112,12 +112,13 @@ class EvosynthAttack(BaseAttack):
 
         # Setup OpenAI client
         api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
-        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL", "https://api.aimlapi.com/v1")
 
-        external_client = AsyncOpenAI(
+        external_client = OpenAIModel(
             api_key=api_key,
             base_url=base_url,
             timeout=30000000,
+
         )
         set_default_openai_client(external_client)
 
@@ -149,10 +150,10 @@ class EvosynthAttack(BaseAttack):
             'openai_api_key': api_key,
             'openai_client': external_client,
             'model_objects': {
-                'attack_model_base': self.config.attack_model_base,
-                # 'judge_model_base': self.config.judge_model_name,
-                # 'target_model_name': self.config.target_model_name,
-                # 'judge_model_name': self.config.judge_model_name,
+                'attack_model_base': getattr(self.model, "model_name", self.config.attack_model_base),
+                'judge_model_base': getattr(self.judge_model, "model_name", self.config.judge_model_name),
+                'target_model_name': getattr(self.model, "model_name", self.config.target_model_name),
+                'judge_model_name': getattr(self.judge_model, "model_name", self.config.judge_model_name),
                 'openai_model': None  # Will be set by orchestrator
             },
             'logs_dir': self.config.logs_dir,

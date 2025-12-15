@@ -6,6 +6,9 @@ import base64
 from io import BytesIO
 from typing import Any, Optional, List, Dict, Union
 from PIL import Image
+import os
+import asyncio
+from functools import partial
 
 @model_registry.register("openai")
 class OpenAIModel(BaseModel):
@@ -16,7 +19,7 @@ class OpenAIModel(BaseModel):
     def __init__(self,
                  api_key: str,
                  base_url: Optional[str] = None,
-                 model_name: str = "gpt-3.5-turbo",
+                 model_name: str = "openai/gpt-5-2",
                  temperature: float = 0.7,
                  max_tokens: int = None,
                  retry_attempts: int = 3,
@@ -46,6 +49,7 @@ class OpenAIModel(BaseModel):
         self.retry_delay = retry_delay
         self.system_message = system_message
         self.embedding_model = embedding_model
+        self.api_key = api_key
 
         # Initialize conversation history
         self.conversation_history = [{"role": "system", "content": system_message}]
@@ -59,9 +63,7 @@ class OpenAIModel(BaseModel):
         # Configure OpenAI client
         openai.api_key = api_key
 
-        # Normalize base_url so callers can pass either "https://api.openai.com" or
-        # "https://api.openai.com/v1". Missing the /v1 prefix causes connection/404 errors
-        # when the SDK requests /chat/completions.
+        # Normalize base_url so callers can pass either root or /v1
         if base_url:
             normalized_base_url = base_url.rstrip("/")
             if not normalized_base_url.endswith("v1"):
@@ -69,13 +71,26 @@ class OpenAIModel(BaseModel):
             openai.base_url = normalized_base_url
         else:
             normalized_base_url = "https://api.openai.com/v1"
+        self.base_url = normalized_base_url
 
         self.client = openai.OpenAI()
+
+        class _AsyncChatProxy:
+            def __init__(self, chat_obj):
+                self._chat = chat_obj
+                self.completions = self
+
+            async def create(self, *args, **kwargs):
+                loop = asyncio.get_running_loop()
+                fn = partial(self._chat.completions.create, *args, **kwargs)
+                return await loop.run_in_executor(None, fn)
+
+        # Provide chat shortcut expected by some utilities (awaitable even for sync client)
+        self.chat = _AsyncChatProxy(self.client.chat)
         print(f"Initialized OpenAI model: {model_name}")
 
     def _filter_client_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Filter kwargs suitable for OpenAI client initialization"""
-        # Valid parameters for OpenAI() client
         valid_client_params = {
             'timeout', 'max_retries', 'default_headers', 'default_query',
             'http_client', 'api_key', 'base_url', 'organization', 'project'
@@ -84,7 +99,6 @@ class OpenAIModel(BaseModel):
 
     def _filter_chat_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Filter kwargs suitable for chat.completions.create()"""
-        # Valid parameters for chat completions
         valid_chat_params = {
             'frequency_penalty', 'logit_bias', 'logprobs', 'top_logprobs',
             'max_tokens', 'n', 'presence_penalty', 'response_format',
@@ -95,11 +109,51 @@ class OpenAIModel(BaseModel):
 
     def _filter_embedding_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Filter kwargs suitable for embeddings.create()"""
-        # Valid parameters for embeddings
         valid_embedding_params = {
             'encoding_format', 'dimensions', 'user'
         }
         return {k: v for k, v in kwargs.items() if k in valid_embedding_params}
+
+
+@model_registry.register("aimlapi")
+class AimlAPIModel(OpenAIModel):
+    """
+    Drop-in model that targets aimlapi.com's OpenAI-compatible gateway.
+
+    Defaults:
+      base_url: https://api.aimlapi.com/v1
+      model_name: gpt-5.2 (per aimlapi docs)
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = "https://api.aimlapi.com/v1",
+        model_name: str = "gpt-5.2",
+        temperature: float = 0.7,
+        max_tokens: int = None,
+        retry_attempts: int = 3,
+        retry_delay: float = 2.0,
+        system_message: str = "You are a helpful assistant.",
+        embedding_model: str = "text-embedding-3-small",
+        **kwargs,
+    ):
+        # Allow env var override (keeps parity with OpenAIModel usage)
+        api_key = api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
+        super().__init__(
+            api_key=api_key,
+            base_url=base_url,
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            system_message=system_message,
+            embedding_model=embedding_model,
+            **kwargs,
+        )
+        print(f"Initialized AimlAPI model via {base_url}: {model_name}")
+
 
     def _encode_image_to_base64(self, image_input: Union[str, Any]) -> str:
         """Encode an image to base64 string. Supports both file paths and PIL Image objects.

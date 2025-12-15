@@ -19,7 +19,7 @@ class MultiThreadedOpenAIModel(MultiThreadedModel):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gpt-4",
+        model_name: str = "openai/gpt-5-2",
         base_url: Optional[str] = None,
         system_message: str = "You are a helpful assistant.",
         temperature: float = 0.7,

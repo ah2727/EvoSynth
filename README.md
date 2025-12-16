@@ -142,7 +142,7 @@ curl http://192.168.1.50:11434/api/chat \
   -d '{"model":"llama3.2","messages":[{"role":"user","content":"ping"}],"stream":false}'
 ```
 
-# 5) Use in EvoSynth
+# 5) Use Ollama in EvoSynth
 from jailbreak_toolbox.attacks.blackbox.implementations.evosynth import EvosynthConfig
 
 config = EvosynthConfig(

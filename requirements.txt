@@ -4,7 +4,7 @@ openai-agents
 nest-asyncio>=1.6.0
 aiofiles>=25.1.0
 python-dotenv>=1.2.1
-
+pytest-asyncio
 # Data Processing
 pandas>=2.2.3
 

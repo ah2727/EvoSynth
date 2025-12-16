@@ -143,13 +143,14 @@ curl http://192.168.1.50:11434/api/chat \
 ```
 
 # 5) Use Ollama in EvoSynth
+```python
 from jailbreak_toolbox.attacks.blackbox.implementations.evosynth import EvosynthConfig
 
 config = EvosynthConfig(
     base_url="http://192.168.1.50:11434",  # no /api, no /v1
     attack_model_base="llama3.2",          # must match `ollama list` on the server
 )
-
+```
 ### Command Line Usage
 
 ```bash

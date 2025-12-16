@@ -18,6 +18,17 @@ import os
 _log_lock = threading.Lock()
 
 
+def _to_jsonable(obj):
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_jsonable(v) for v in obj]
+    # SimpleNamespace or similar
+    if hasattr(obj, "__dict__"):
+        return {k: _to_jsonable(v) for k, v in vars(obj).items()}
+    return obj
+
+
 def _write_line(path: Path, line: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", buffering=1) as f:
@@ -42,9 +53,9 @@ def log_messages(
         entry = {
             "ts": datetime.now(UTC).isoformat(),
             "model": model_name,
-            "messages": list(messages),
-            "response": response,
-            "tool_calls": tool_calls,
+            "messages": _to_jsonable(list(messages)),
+            "response": _to_jsonable(response),
+            "tool_calls": _to_jsonable(tool_calls),
         }
         line = json.dumps(entry, ensure_ascii=False)
 

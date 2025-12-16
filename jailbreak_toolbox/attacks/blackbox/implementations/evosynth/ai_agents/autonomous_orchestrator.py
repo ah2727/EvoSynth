@@ -104,6 +104,13 @@ class AutonomousOrchestrator:
                     def __init__(self, content: str):
                         from types import SimpleNamespace
                         self.choices = [SimpleNamespace(message=SimpleNamespace(content=content))]
+                        self.usage = SimpleNamespace(
+                            prompt_tokens=0,
+                            completion_tokens=len(content.split()),
+                            total_tokens=len(content.split()),
+                            prompt_tokens_details=None,
+                            completion_tokens_details=None,
+                        )
 
                 @staticmethod
                 def _extract_content(data: dict) -> str:
@@ -153,8 +160,12 @@ class AutonomousOrchestrator:
                                 last_err = None
                                 for attempt in range(5):
                                     try:
-                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
-                                        if resp.status_code == 429:
+                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=500)
+                                        if resp.status_code in (429, 500):
+                                            try:
+                                                print(f"[ollama compat] status={resp.status_code} body={resp.text[:500]}")
+                                            except Exception:
+                                                pass
                                             time.sleep(min(2 ** attempt, 10))
                                             continue
                                         resp.raise_for_status()

@@ -46,13 +46,32 @@ runtime_loop = AsyncioLoopThread()
 loop = runtime_loop.ensure()
 install_asyncio_exception_logger(loop)
 
+# Use spawn start method for cross-platform safety (avoids fork-related hangs on macOS)
+try:
+    if mp.get_start_method(allow_none=True) != "spawn":
+        mp.set_start_method("spawn", force=True)
+except RuntimeError:
+    # start method already set; ignore
+    pass
+
+CLI_VERSION = "0.2.0"
+
+
 def parse_args():
     """Parse command line arguments for non-attack configuration parameters only.
 
     Attack method hyperparameters are kept hardcoded to preserve research integrity.
     Only execution, model, and infrastructure parameters are configurable.
     """
-    parser = argparse.ArgumentParser(description="Async jailbreak attack evaluation tool")
+    parser = argparse.ArgumentParser(
+        description="Async jailbreak attack evaluation tool",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="""Examples:
+  python eval_async.py --attacker-model ollama/gpt-oss:latest --judge-model ollama/gpt-oss:latest --target-models ollama/gpt-oss:latest --base-url http://localhost:11434
+  python eval_async.py --attacker-model gpt-4o --judge-model gpt-4o-mini --target-models gpt-4o gpt-4o-mini --dataset harmbench_test""",
+    )
+
+    parser.add_argument("--version", action="store_true", help="Show version and exit")
 
     # Model configurations (non-attack parameters)
     parser.add_argument("--attacker-model", type=str, default="deepseek-chat",
@@ -70,6 +89,10 @@ def parse_args():
     parser.add_argument("--base-url", type=str,
                        default=os.getenv("OPENAI_BASE_URL","https://api.aimlapi.com/v1"),
                        help="OpenAI-compatible API base URL")
+
+    parser.add_argument("--log-level", type=str, default="INFO",
+                       choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                       help="Logging verbosity")
 
     # Model parameters (non-attack specific)
     parser.add_argument("--temperature", type=float, default=1.0,
@@ -94,6 +117,7 @@ def parse_args():
     # Experiment control options
     parser.add_argument("--reload-existing", action="store_true", default=True,
                        help="Reload existing results instead of skipping (default: True)")
+    parser.add_argument("--dry-run", action="store_true", help="Print resolved configuration and exit without running attacks")
 
     return parser.parse_args()
 
@@ -478,6 +502,18 @@ async def main():
     # Load environment variables and parse arguments
     load_dotenv()
     args = parse_args()
+    if args.version:
+        print(f"eval_async CLI version {CLI_VERSION}")
+        return
+
+    if not args.base_url:
+        print("Error: --base-url is required (e.g., http://localhost:11434 or https://api.openai.com/v1)")
+        sys.exit(2)
+
+    if not args.target_models:
+        print("Error: --target-models must include at least one model")
+        sys.exit(2)
+
     sys.path.append(str(Path(__file__).parent.parent))
 
     # Configure logging
@@ -486,7 +522,7 @@ async def main():
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, args.log_level, logging.INFO),
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler(log_file),
@@ -505,6 +541,24 @@ async def main():
     target_model_configs = [{"model_name": model} for model in args.target_models]
     
     max_processes = args.max_processes or min(len(target_model_configs), os.cpu_count())
+
+    if args.dry_run:
+        print("⚙️  Dry run: configuration resolved as")
+        print(json.dumps({
+            "attacker_model": args.attacker_model,
+            "judge_model": args.judge_model,
+            "target_models": args.target_models,
+            "base_url": args.base_url,
+            "api_key_present": bool(args.api_key),
+            "temperature": args.temperature,
+            "max_processes": max_processes,
+            "max_concurrent_queries": args.max_concurrent_queries,
+            "results_dir": args.results_dir,
+            "logs_dir": args.logs_dir,
+            "dataset": args.dataset,
+            "reload_existing": args.reload_existing,
+        }, indent=2))
+        return
 
     # Attack configuration (hardcoded as requested)
     available_attacks = [

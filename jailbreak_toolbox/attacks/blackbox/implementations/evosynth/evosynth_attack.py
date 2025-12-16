@@ -167,13 +167,13 @@ class EvosynthAttack(BaseAttack):
                     self.responses = self.Responses(self)
 
                 class _RespObj:
-                    def __init__(self, content: str):
+                    def __init__(self, content: str, tool_calls=None):
                         from types import SimpleNamespace
                         msg = SimpleNamespace(
                             content=content,
                             refusal=None,
                             audio=None,
-                            tool_calls=[],
+                            tool_calls=tool_calls or [],
                             role="assistant",
                             logprobs=None,
                         )
@@ -205,6 +205,7 @@ class EvosynthAttack(BaseAttack):
                                 "model": model,
                                 "messages": messages or [],
                                 "stream": False,
+                                "tools": kwargs.get("tools"),
                                 "options": {}
                             }
 
@@ -233,14 +234,15 @@ class EvosynthAttack(BaseAttack):
 
                             data = await asyncio.to_thread(_post)
                             content = EvosynthAttack._extract_content(data)
-                            resp_obj = _OllamaCompatClient._RespObj(content)
+                            tool_calls = (data.get("message") or {}).get("tool_calls") or []
+                            resp_obj = _OllamaCompatClient._RespObj(content, tool_calls=tool_calls)
                             try:
-                                print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]}")
+                                print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]} tool_calls={len(tool_calls)}")
                                 log_messages(
                                     log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
                                     model_name=model or self.outer.model_name if hasattr(self.outer, "model_name") else "ollama-compat",
                                     messages=messages or [],
-                                    response=content,
+                                    response={"content": content, "tool_calls": tool_calls},
                                 )
                             except Exception:
                                 pass

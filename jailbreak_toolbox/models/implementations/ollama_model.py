@@ -95,7 +95,9 @@ class OllamaModel(BaseModel):
             "options": {
                 "temperature": kwargs.get("temperature", self.temperature),
             },
-            "tools": kwargs.get("tools"),  # support tool-calling when provided
+            # Ollama tool-calling: pass through tools and optional tool_choice
+            "tools": kwargs.get("tools"),
+            "tool_choice": kwargs.get("tool_choice"),
         }
 
         resp = requests.post(url, json=payload, timeout=self.timeout)
@@ -104,10 +106,10 @@ class OllamaModel(BaseModel):
         resp.raise_for_status()
         data = resp.json()
 
-        # Extract text from Ollama response
-        content = ""
+        # Extract text and tool calls from Ollama response
         msg = data.get("message") or {}
-        content = msg.get("content", "")
+        content = msg.get("content", "") or ""
+        tool_calls = msg.get("tool_calls") or []
 
         if maintain_history:
             self.conversation_history.append({"role": "assistant", "content": content})
@@ -118,9 +120,12 @@ class OllamaModel(BaseModel):
                 log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
                 model_name=self.model_name,
                 messages=messages,
-                response=content,
+                response={"content": content, "tool_calls": tool_calls},
             )
         except Exception:
             pass
 
+        # If tool calls exist, return them alongside content (as tuple)
+        if tool_calls:
+            return content, tool_calls
         return content

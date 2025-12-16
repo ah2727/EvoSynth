@@ -17,6 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 from agents import function_tool, RunContextWrapper
 from httpx import get
 from openai import base_url
+import requests
 from jailbreak_toolbox.utils.net_resilience import (
     GlobalLimiter,
     CircuitBreaker,
@@ -79,9 +80,12 @@ def judge_response(
     target_model = ctx.context.target_model
     judge_model_instance = ctx.context.judge_model
     
-    # Get target response from target model
+    # Get target response from target model (handle Ollama tool-calls if returned)
     try:
-        target_response = target_model.query(attack_prompt)
+        target_response = target_model.query(attack_prompt, tools=[])
+        # If model returns (content, tool_calls), unwrap content
+        if isinstance(target_response, tuple) and len(target_response) >= 1:
+            target_response = target_response[0]
     except Exception as e:
         print("judge model response error: ",e)
         return {
@@ -184,10 +188,16 @@ async def judge_response_direct(
     
     # Get target response from target model
     try:
-        if( target_response==None):
+        if target_response is None:
             print("judge_response_direct  target response is None, regenerate from the target model")
             loop = asyncio.get_event_loop()
-            target_response = await loop.run_in_executor(None, lambda: target_model.query(text_input=attack_prompt))
+            def _call():
+                resp = target_model.query(text_input=attack_prompt, tools=[])
+                # unwrap tuple(content, tool_calls)
+                if isinstance(resp, tuple) and len(resp) >= 1:
+                    return resp[0]
+                return resp
+            target_response = await loop.run_in_executor(None, _call)
         #("Judge response direct, Target Response: ",target_response)
     except Exception as e:
         print("judge direct error: ",e)

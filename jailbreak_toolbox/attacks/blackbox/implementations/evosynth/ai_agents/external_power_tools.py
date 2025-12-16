@@ -24,6 +24,7 @@ from jailbreak_toolbox.utils.net_resilience import (
     RetryConfig,
     call_with_retries,
 )
+from jailbreak_toolbox.utils.llm_logger import log_messages
 
 # Per-process network guards to avoid thundering-herd connection errors
 NET_LIMITER = GlobalLimiter(max_in_flight=6)
@@ -89,6 +90,13 @@ def judge_response(
             target_response = content
         else:
             tool_calls = []
+        _log_tool(
+            target_model,
+            attack_prompt,
+            target_response,
+            tool_calls,
+            log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+        )
     except Exception as e:
         print("judge model response error: ",e)
         return {
@@ -113,25 +121,25 @@ def judge_response(
             "reasoning": "LLM judge not available, used keyword fallback",
             "judged_at": datetime.now().isoformat()
         }
-    
+
     try:
         # Use the actual LLM judge
         judge = LLMJudge(
             judge_model=judge_model_instance,
             success_threshold=success_threshold
         )
-        
+
         # Get the judgment - use infer_single method for single query/response
         score, reasoning = judge.infer_single(original_query, target_response)
-        
+
         # If score is less than 5, analyze why the query was considered unsafe
         target_model_analysis = None
         judge_model_analysis = None
         if score < 5:
             target_model_analysis = _ask_target_model_about_refusal(original_query, target_response, attack_prompt, target_model)
             judge_model_analysis = _ask_judge_model_about_safety(original_query, target_response, attack_prompt, judge_model_instance)
-        
-        return {
+
+        res = {
             "judgment_completed": True,
             "judge_type": "llm_judge",
             "target_response": target_response,
@@ -143,10 +151,12 @@ def judge_response(
             "judge_model_analysis": judge_model_analysis,
             "judged_at": datetime.now().isoformat()
         }
-        
+        _log_tool(target_model, attack_prompt, res, tool_calls=tool_calls, log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs")
+        return res
+
     except Exception as e:
         print(f"Error in judge_response: {e}")
-        return {
+        res = {
             "judgment_completed": False,
             "judge_type": "llm_judge_error",
             "target_response": target_response,
@@ -156,6 +166,8 @@ def judge_response(
             "reasoning": f"Error during judgment: {str(e)}",
             "judged_at": datetime.now().isoformat()
         }
+        _log_tool(target_model, attack_prompt, res, tool_calls=tool_calls, log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs")
+        return res
 
 
 
@@ -204,7 +216,7 @@ async def judge_response_direct(
         #("Judge response direct, Target Response: ",target_response)
     except Exception as e:
         print("judge direct error: ",e)
-        return {
+        res = {
             "judgment_completed": False,
             "judge_type": "target_model_error",
             "error": str(e),
@@ -213,11 +225,13 @@ async def judge_response_direct(
             "reasoning": f"Error getting target response: {str(e)}",
             "judged_at": datetime.now().isoformat()
         }
+        _log_tool(target_model, attack_prompt, res, tool_calls=None, log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs")
+        return res
     
     if not JUDGE_AVAILABLE or not judge_model_instance:
         # Fallback to simple keyword-based judgment
         print("use fallback judge response due to inavaiability of the judge itself")
-        return {
+        res = {
             "judgment_completed": True,
             "judge_type": "fallback_keyword",
             "target_response": target_response,
@@ -227,6 +241,8 @@ async def judge_response_direct(
             "reasoning": "LLM judge not available, used keyword fallback",
             "judged_at": datetime.now().isoformat()
         }
+        _log_tool(target_model, attack_prompt, res, tool_calls=None, log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs")
+        return res
 
     try:
         # Use the actual LLM judge
@@ -247,7 +263,7 @@ async def judge_response_direct(
             target_model_analysis = await loop.run_in_executor(None, _ask_target_model_about_refusal, original_query, target_response, attack_prompt, target_model)
             judge_model_analysis = await loop.run_in_executor(None, _ask_judge_model_about_safety, original_query, target_response, attack_prompt, judge_model_instance)
 
-        return {
+        res = {
             "judgment_completed": True,
             "judge_type": "llm_judge",
             "target_response": target_response,
@@ -259,10 +275,12 @@ async def judge_response_direct(
             "judge_model_analysis": judge_model_analysis,
             "judged_at": datetime.now().isoformat()
         }
-        
+        _log_tool(target_model, attack_prompt, res, tool_calls=None, log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs")
+        return res
+
     except Exception as e:
         print(f"Error in judge_response: {e}")
-        return {
+        res = {
             "judgment_completed": False,
             "judge_type": "llm_judge_error",
             "target_response": target_response,
@@ -272,6 +290,20 @@ async def judge_response_direct(
             "reasoning": f"Error during judgment: {str(e)}",
             "judged_at": datetime.now().isoformat()
         }
+        _log_tool(target_model, attack_prompt, res, tool_calls=None, log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs")
+        return res
+
+def _log_tool(model, prompt, response, tool_calls, log_dir):
+    try:
+        log_messages(
+            log_dir=log_dir,
+            model_name=getattr(model, "model_name", "unknown-model"),
+            messages=[{"role": "user", "content": prompt}],
+            response=response,
+            tool_calls=tool_calls,
+        )
+    except Exception:
+        pass
 
 
 

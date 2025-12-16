@@ -47,7 +47,8 @@ def log_messages(
     Append a single JSONL record for an LLM call.
 
     Writes to the provided log_dir/llm_messages.log and also mirrors to ./logs/llm_messages.log
-    so tailing is predictable even if callers pass custom paths.
+    so tailing is predictable even if callers pass custom paths. Also mirrors to tools_log.jsonl
+    to make tool-call auditing easy.
     """
     try:
         entry = {
@@ -63,6 +64,8 @@ def log_messages(
         mirror = Path("./logs/llm_messages.log")
         session_path_env = os.getenv("EVOSYNTH_SESSION_LOG")
         session_path = Path(session_path_env) if session_path_env else None
+        tools_primary = Path(log_dir or "./logs") / "tools_log.jsonl"
+        tools_mirror = Path("./logs/tools_log.jsonl")
 
         with _log_lock:
             _write_line(primary, line)
@@ -70,6 +73,10 @@ def log_messages(
                 _write_line(mirror, line)
             if session_path and session_path.resolve() not in {primary.resolve(), mirror.resolve()}:
                 _write_line(session_path, line)
+            # Always log to tools logs as well for auditing
+            _write_line(tools_primary, line)
+            if tools_mirror.resolve() not in {primary.resolve(), mirror.resolve(), tools_primary.resolve()}:
+                _write_line(tools_mirror, line)
     except Exception:
         # Logging should never break the caller
         return

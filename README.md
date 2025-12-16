@@ -120,7 +120,62 @@ For best results, we recommend using router platforms that provide unified acces
 Set your `base_url` parameter to the router's endpoint when initializing OpenAIModel:
 
 ---
+### ollama setup 
+- **Ollama** — run models locally (or on a home server) and connect via HTTP
 
+---
+
+### Ollama Setup (Download • Pull a model • Connect)
+
+#### 1) Install Ollama
+
+**Linux**
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+macOS / Windows
+
+Download and install from: https://ollama.com/download
+
+2) Pull a model
+bash
+Copy code
+ollama pull llama3.2
+# Examples: llama3.1, gemma3, mistral, qwen2.5, ...
+Use an exact tag that exists on your Ollama server (ollama list).
+
+3) Start the Ollama server
+Local (default)
+
+bash
+Copy code
+ollama serve
+Expose to your home LAN (optional — be careful)
+
+bash
+Copy code
+# Listen on all interfaces
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+
+# Or listen only on a specific LAN IP (recommended)
+# OLLAMA_HOST=192.168.1.50:11434 ollama serve
+4) Point EvoSynth to Ollama
+EvoSynth uses:
+
+POST {base_url}/api/chat
+
+So your base_url must be the host root (no /api, no /v1):
+
+python
+Copy code
+config = EvosynthConfig(
+    base_url="http://192.168.1.50:11434",  # <-- no /api, no /v1
+    attack_model_base="llama3.2",          # <-- must match `ollama list` on the server
+)
+5) Quick connectivity test (from the client machine)
+bash
+Copy code
+curl http://192.168.1.50:11434/api/tags
+---
 ## Quick Start
 
 ### Environment Setup

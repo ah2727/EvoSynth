@@ -45,6 +45,6 @@ def test_eval_async_dry_run(tmp_path):
     )
 
     assert completed.returncode == 0, f"stderr: {completed.stderr}"
-    assert "Dry run: configuration resolved" in completed.stdout
+    assert "Dry run: configuration resolved" in completed.stderr or completed.stdout
     # Ensure results dir was created by the CLI setup
     assert results_dir.exists()

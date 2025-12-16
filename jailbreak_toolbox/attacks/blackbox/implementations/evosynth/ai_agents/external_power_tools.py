@@ -50,6 +50,7 @@ except ImportError:
     print("Warning: LLM Judge not available")
 
 
+
 @function_tool
 def judge_response(
     ctx: RunContextWrapper,
@@ -185,7 +186,7 @@ async def judge_response_direct(
     try:
         if( target_response==None):
             print("judge_response_direct  target response is None, regenerate from the target model")
-            loop = asyncio.get_running_loop()
+            loop = asyncio.get_event_loop()
             target_response = await loop.run_in_executor(None, lambda: target_model.query(text_input=attack_prompt))
         #("Judge response direct, Target Response: ",target_response)
     except Exception as e:
@@ -221,7 +222,7 @@ async def judge_response_direct(
             success_threshold=success_threshold
         )
 
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
 
         # Get the judgment - use infer_single method for single query/response
         score, reasoning = await loop.run_in_executor(None, judge.infer_single, original_query, target_response)
@@ -317,7 +318,7 @@ def execute_code(
     Returns:
         Execution results with performance metrics and code context
     """
-    start_time = asyncio.get_running_loop().time()
+    start_time = asyncio.get_event_loop().time()
     execution_success = False
     execution_result = None
     execution_error = None
@@ -349,12 +350,12 @@ def execute_code(
             execution_result = "Code executed successfully (no explicit result)"
         
         execution_success = True
-        execution_time = asyncio.get_running_loop().time() - start_time
+        execution_time = asyncio.get_event_loop().time() - start_time
         
     except Exception as e:
         execution_success = False
         execution_error = str(e)
-        execution_time = asyncio.get_running_loop().time() - start_time
+        execution_time = asyncio.get_event_loop().time() - start_time
         execution_result = None
         
         # Try to extract line number from error message
@@ -724,42 +725,11 @@ async def conduct_multi_turn_conversation(
         
         # Get attack model config from context or .env
         attack_model_config = getattr(ctx.context, 'attack_model_config', {
-            'api_key': os.environ.get('OPENAI_API_KEY', ''),
-            'model_name': os.environ.get('OPENAI_MODEL', 'openai/gpt-5-2'),
+            'api_key': os.environ.get('OPENAI_API_KEY', 'dummy-key'),
+            'model_name': os.environ.get('OPENAI_MODEL', 'deepseek-chat'),
             'temperature': float(os.environ.get('OPENAI_TEMPERATURE', '0.7')),
-            "base_url": os.environ.get("OPENAI_BASE_URL"),
+            "base_url":os.environ.get("OPENAI_BASE_URL"),
         })
-
-        # Normalize model name to a supported OpenAI id to avoid 404/connection errors.
-        def _normalize_model_name(name: str) -> str:
-            if not name:
-                return "gpt-4.1"
-            lowered = name.lower()
-            allowed_prefixes = ("gpt-5.2", "gpt-5.1", "gpt-5", "gpt-4.1", "gpt-4o", "o1", "gpt-3.5")
-            return lowered if lowered.startswith(allowed_prefixes) else "gpt-4.1"
-
-        attack_model_config['model_name'] = _normalize_model_name(
-            attack_model_config.get('model_name')
-        )
-
-        # Normalize base_url (add /v1 if missing) to avoid connection/404 errors.
-        raw_base = attack_model_config.get('base_url', os.environ.get("OPENAI_BASE_URL"))
-        if raw_base:
-            normalized_base = raw_base.rstrip('/')
-            if not normalized_base.endswith('v1'):
-                normalized_base = f"{normalized_base}/v1"
-            attack_model_config['base_url'] = normalized_base
-        else:
-            attack_model_config['base_url'] = "https://api.aimlapi.com/v1"
-
-        # Ensure an API key exists; fail fast with a clear message instead of cryptic connection errors.
-        api_key = attack_model_config.get('api_key')
-        if not api_key:
-            return {
-                "conversation_completed": False,
-                "reason": "Missing OPENAI_API_KEY; cannot create attack model.",
-                "tool_name": tool_name,
-            }
         
         # Create attack model with strategy system prompt
         attack_model = OpenAIModel(
@@ -817,11 +787,7 @@ Execute this strategy systematically across multiple turns."""
     # Start with initial query (maintain_history=True for attack model)
     try:
         loop = asyncio.get_event_loop()
-        attack_response = await safe_model_call(
-            lambda: loop.run_in_executor(
-                None, lambda: attack_model.query(text_input=initial_query, maintain_history=True)
-            )
-        )
+        attack_response = await loop.run_in_executor(None, lambda: attack_model.query(text_input=initial_query, maintain_history=True))
     except Exception as e:
         print("Error in Conduct Multi-turn conversation: Start with initial query (maintain_history=True for attack model)",e)
         return {
@@ -833,11 +799,7 @@ Execute this strategy systematically across multiple turns."""
     for turn in range(1, max_turns + 1):
         try:
             # Get target model response (maintain conversation history)
-            target_response = await safe_model_call(
-                lambda: loop.run_in_executor(
-                    None, lambda: target_model.query(text_input=attack_response, maintain_history=True)
-                )
-            )
+            target_response = await loop.run_in_executor(None, lambda: target_model.query(text_input=attack_response, maintain_history=True))
             print("turn: ",turn," target response: ",target_response[:100])
 
             # Evaluate response using judge
@@ -889,11 +851,7 @@ Strategy reminder: {strategy_plan}
 
 Generate the next strategic approach building on our conversation so far."""
 
-            attack_response = await safe_model_call(
-                lambda: loop.run_in_executor(
-                    None, lambda: attack_model.query(text_input=next_context, maintain_history=True)
-                )
-            )
+            attack_response = await loop.run_in_executor(None, lambda: attack_model.query(text_input=next_context, maintain_history=True))
 
         except Exception as e:
             # Record error turn
@@ -929,7 +887,6 @@ Generate the next strategic approach building on our conversation so far."""
         "total_turns": total_turns,
         "completed_at": datetime.now().isoformat()
     }
-
 
 @function_tool
 def test_tool_effectiveness(

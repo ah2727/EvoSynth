@@ -87,7 +87,7 @@ def parse_args():
                        default=os.getenv("OPENAI_API_KEY"),
                        help="OpenAI API key")
     parser.add_argument("--base-url", type=str,
-                       default=os.getenv("OPENAI_BASE_URL","https://api.aimlapi.com/v1"),
+                       default=os.getenv("OPENAI_BASE_URL","https://api.openai./v1"),
                        help="OpenAI-compatible API base URL")
 
     parser.add_argument("--log-level", type=str, default="INFO",

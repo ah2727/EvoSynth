@@ -179,6 +179,8 @@ def create_new_ai_concepts(
     
     if 'new_ai_concepts' not in ctx.context.session_data:
         ctx.context.session_data['new_ai_concepts'] = []
+    elif ctx.context.session_data.get('new_ai_concepts') is None:
+        ctx.context.session_data['new_ai_concepts'] = []
     
     concept_entry = {
         "concepts_data": concepts_data,
@@ -222,18 +224,16 @@ def gather_jailbreak_intelligence(
     # Store in session data
     if not hasattr(ctx.context, 'session_data'):
         ctx.context.session_data = {}
-    if(ctx.context.session_data.get('jailbreak_intelligence',None)==None):
-        ctx.context.session_data['jailbreak_intelligence'] = [intelligence_data]
-        print("gather jailbreak intelligence new: ",intelligence_data[:150],len(ctx.context.session_data['intelligence_data']))
-    else:
-        ctx.context.session_data['jailbreak_intelligence'].append(intelligence_data)
-        print("gather jailbreak intelligence: ",intelligence_data[:150],len(ctx.context.session_data['intelligence_data']))
+    if ctx.context.session_data.get('jailbreak_intelligence', None) is None:
+        ctx.context.session_data['jailbreak_intelligence'] = []
+    ctx.context.session_data['jailbreak_intelligence'].append(intelligence_data)
+    print("gather jailbreak intelligence: ", intelligence_data[:150], len(ctx.context.session_data['jailbreak_intelligence']))
     # Store main intelligence data
     
     
     # Store new categories if provided
     if new_categories:
-        if 'new_jailbreak_categories' not in ctx.context.session_data:
+        if 'new_jailbreak_categories' not in ctx.context.session_data or ctx.context.session_data.get('new_jailbreak_categories') is None:
             ctx.context.session_data['new_jailbreak_categories'] = []
         
         new_category_entry = {

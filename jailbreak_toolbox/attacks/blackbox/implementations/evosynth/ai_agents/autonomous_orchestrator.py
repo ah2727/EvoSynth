@@ -14,6 +14,7 @@ from agents import Agent, function_tool, RunContextWrapper, OpenAIChatCompletion
 import requests
 from urllib.parse import urlparse, urlunparse
 from jailbreak_toolbox.utils.llm_logger import log_messages
+import asyncio
 
 
 def _normalize_ollama_host(raw_host: str) -> str:
@@ -76,7 +77,13 @@ class AutonomousOrchestrator:
         # Set up OpenAI model for agents
         # Decide OpenAI vs Ollama mode
         no_api_key = not os.getenv("OPENAI_API_KEY") and not os.getenv("AIML_API_KEY") and not config.get("openai_api_key")
-        base_url_env = config.get("base_url") or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST") or ""
+        # Prefer an explicit Ollama host, then OpenAI override, then config, finally a sensible local default.
+        base_url_env = (
+            os.getenv("OLLAMA_HOST")
+            or os.getenv("OPENAI_BASE_URL")
+            or config.get("base_url")
+            or "http://localhost:11434"
+        )
         model_obj = config.get("model_objects", {}) if isinstance(config, dict) else {}
         attack_model_name = model_obj.get("attack_model_base", "")
         target_model_name = model_obj.get("target_model_name", "")
@@ -90,6 +97,12 @@ class AutonomousOrchestrator:
             or str(target_model_name).lower().startswith("ollama/")
             or str(judge_model_name).lower().startswith("ollama/")
         )
+        # Never treat OpenAI/HF router/Azure endpoints as Ollama even if model hints so
+        if any(domain in base_url_env for domain in ["openai.com", "router.huggingface.co", "azure.com", "openai.azure.com","groq.com"]):
+            using_ollama = False
+        # If an API key is explicitly provided, prefer non-Ollama path
+        if os.getenv("OPENAI_API_KEY") or os.getenv("AIML_API_KEY") or config.get("openai_api_key"):
+            using_ollama = False
 
         def _normalize_tool_calls(raw):
             from types import SimpleNamespace
@@ -123,6 +136,8 @@ class AutonomousOrchestrator:
             return f"{h}/api/chat"
 
         if using_ollama or (no_api_key and config.get("openai_client") is None):
+            if any(domain in base_url_env for domain in ["openai.com", "router.huggingface.co", "azure.com", "openai.azure.com","groq.com"]) and no_api_key:
+                raise ValueError("OpenAI-style base_url provided without API key. Set OPENAI_API_KEY/AIML_API_KEY/HF_TOKEN or point base_url to an Ollama host.")
             # Provide a lightweight OpenAI-compatible client that calls Ollama /api/chat
             class _OllamaCompatClient:
                 def __init__(self, host):
@@ -156,6 +171,17 @@ class AutonomousOrchestrator:
                 def _extract_content(data: dict) -> str:
                     if isinstance(data, tuple) and data:
                         data = data[0]
+                    # Ollama sometimes returns {"error": "..."} with 200 status.
+                    if isinstance(data, dict):
+                        err = data.get("error")
+                        if isinstance(err, str) and err.strip():
+                            return err
+                        # Some proxies wrap the error object
+                        detail = data.get("detail")
+                        if isinstance(detail, str) and detail.strip():
+                            return detail
+                        if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+                            return detail["message"]
                     msg = data.get("message")
                     if isinstance(msg, dict) and isinstance(msg.get("content"), str):
                         return msg["content"]
@@ -193,12 +219,16 @@ class AutonomousOrchestrator:
                                 "messages": messages or [],
                                 "stream": False,
                                 "tools": kwargs.get("tools"),
+                                # Default to OpenAI behavior: auto when tools are present, else none.
                                 "tool_choice": kwargs.get("tool_choice"),
                                 "options": {}
                             }
+                            if payload["tools"] and payload["tool_choice"] is None:
+                                payload["tool_choice"] = "auto"
 
                             def _post():
                                 import time
+                                rate_sleep = float(os.getenv("RATE_LIMIT_SLEEP_MS", "2000")) / 1000.0
                                 last_err = None
                                 for attempt in range(5):
                                     try:
@@ -208,7 +238,15 @@ class AutonomousOrchestrator:
                                                 print(f"[ollama compat] status={resp.status_code} body={resp.text[:500]}")
                                             except Exception:
                                                 pass
-                                            time.sleep(min(2 ** attempt, 10))
+                                            # Respect rate limit headers if present
+                                            retry_after = resp.headers.get("retry-after")
+                                            if retry_after:
+                                                try:
+                                                    time.sleep(float(retry_after))
+                                                    continue
+                                                except Exception:
+                                                    pass
+                                            time.sleep(max(rate_sleep, min(2 ** attempt, 10)))
                                             continue
                                         resp.raise_for_status()
                                         return resp.json()
@@ -221,7 +259,17 @@ class AutonomousOrchestrator:
 
                             data = await asyncio.to_thread(_post)
                             content = _OllamaCompatClient._extract_content(data)
+
+                            # Tool calls can appear in several shapes:
+                            # - Ollama compatible: {"message": {"tool_calls": [...]}}
+                            # - OpenAI: {"choices":[{"message":{"tool_calls":[...]}}]}
                             tool_calls_raw = (data.get("message") or {}).get("tool_calls") or []
+                            if not tool_calls_raw:
+                                choices = data.get("choices") or []
+                                if choices:
+                                    msg = (choices[0] or {}).get("message") or {}
+                                    tool_calls_raw = msg.get("tool_calls") or []
+
                             tool_calls = _normalize_tool_calls(tool_calls_raw)
                             resp_obj = _OllamaCompatClient._RespObj(content, tool_calls=tool_calls)
                             try:
@@ -245,7 +293,7 @@ class AutonomousOrchestrator:
                         return await _OllamaCompatClient.Chat.Completions(self.outer).create(
                             model=model, messages=input or [], **kwargs
                         )
-            compat_client = _OllamaCompatClient(base_url_env or "http://192.168.100.37:10101")
+            compat_client = _OllamaCompatClient(base_url_env or "http://localhost:11434")
             self.openai_model = OpenAIChatCompletionsModel(
                 model=config.get('model_objects', {}).get('attack_model_base', 'ollama'),
                 openai_client=compat_client,
@@ -276,7 +324,7 @@ class AutonomousOrchestrator:
         self.config['model_objects']['openai_model'] = self.openai_model
         
         self.initialize_agents()
-        
+
         # Define sequential pipeline routes
         # Each decision determines where to START, then we continue sequentially
         self.pipeline_routes = {
@@ -301,6 +349,24 @@ class AutonomousOrchestrator:
                 "sequence": ["reconnaissance", "tool_creation", "exploitation"]
             }
         }
+
+    async def _run_with_backoff(self, runner_callable, *args, retries: int = 3, delay_seconds: float = None, **kwargs):
+        """Run a coroutine with simple fixed backoff on rate-limit errors."""
+        delay = delay_seconds if delay_seconds is not None else float(os.getenv("RATE_LIMIT_SLEEP_MS", "3000")) / 1000.0
+        last_err = None
+        for attempt in range(retries):
+            try:
+                return await runner_callable(*args, **kwargs)
+            except Exception as e:
+                last_err = e
+                msg = str(e).lower()
+                if "rate limit" in msg or "429" in msg:
+                    if attempt < retries - 1:
+                        await asyncio.sleep(delay)
+                        continue
+                raise
+        if last_err:
+            raise last_err
         
     def initialize_agents(self):
         """Initialize all agents with proper handoffs"""
@@ -761,7 +827,14 @@ class AutonomousOrchestrator:
         """
         
         try:
-            result = await Runner.run(agent, input_text, context=self.context, max_turns=1000)
+            result = await self._run_with_backoff(
+                Runner.run,
+                agent,
+                input_text,
+                context=self.context,
+                max_turns=1000,
+                retries=3,
+            )
         except Exception as e:
             import traceback
             print(f"Error in Reconnaissance phase (full traceback below): {e}")
@@ -828,7 +901,14 @@ class AutonomousOrchestrator:
         Quality over quantity: Create tools that have high potential for success.
         """
 
-        result = await Runner.run(agent, input_text, context=self.context, max_turns=1000)
+        result = await self._run_with_backoff(
+            Runner.run,
+            agent,
+            input_text,
+            context=self.context,
+            max_turns=1000,
+            retries=3,
+        )
         self._log_agent_conversation("tool_creation", result)
 
         # Check again after tool creation
@@ -890,7 +970,14 @@ class AutonomousOrchestrator:
         Focus on achieving high-success jailbreaks through strategic multi-turn conversations.
         """
         
-        result = await Runner.run(agent, input_text, context=self.context, max_turns=1000)
+        result = await self._run_with_backoff(
+            Runner.run,
+            agent,
+            input_text[:100000],
+            context=self.context,
+            max_turns=500,
+            retries=3,
+        )
         self._log_agent_conversation("exploitation", result)
         
         # Get attack results from session data
@@ -970,7 +1057,14 @@ class AutonomousOrchestrator:
         Exploitation Results: {exploit_result}
         """
         
-        result = await Runner.run(agent, input_text[:100000], context=self.context, max_turns=500)
+        result = await self._run_with_backoff(
+            Runner.run,
+            agent,
+            input_text[:100000],
+            context=self.context,
+            max_turns=500,
+            retries=3,
+        )
         self._log_agent_conversation("master_coordinator", result)
         
         # Parse decision from result

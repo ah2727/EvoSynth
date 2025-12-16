@@ -136,18 +136,37 @@ class AsyncOrchestrator:
 
         # Setup OpenAI client
         api_key = self.config.openai_api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
-        base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST")
 
-        # Permit Ollama-style endpoints without an API key; still require key for remote services
-        is_local_ollama = base_url and (
-            "ollama" in base_url
-            or "localhost:11434" in base_url
-            or base_url.endswith("/api/chat")
-            or base_url.endswith("/api/generate")
-            or "192.168.100.37:10101" in base_url
+        # Prefer explicit runtime overrides (ENV) over config defaults so tests can
+        # inject a local Ollama endpoint without needing an API key.
+        # Order matters: let explicit local overrides (OLLAMA_HOST) win even when
+        # a global OPENAI_BASE_URL is present in the developer environment.
+        base_url = (
+            os.getenv("OLLAMA_HOST")
+            or os.getenv("OPENAI_BASE_URL")
+            or self.config.base_url
+        )
+        ollama_env = os.getenv("OLLAMA_HOST")
+
+        # Permit Ollama-style endpoints without an API key; still require key for remote services.
+        # Tests monkeypatch OLLAMA_HOST=http://localhost:11434 so be generous in what we accept.
+        is_local_ollama = bool(ollama_env) or (
+            bool(base_url)
+            and (
+                "ollama" in base_url
+                or "localhost" in base_url
+                or "127.0.0.1" in base_url
+                or base_url.startswith("http://192.168.")
+                or base_url.endswith("/api/chat")
+                or base_url.endswith("/api/generate")
+                or "192.168.100.37:10101" in base_url
+            )
         )
         if not is_local_ollama and not api_key:
-            raise ValueError("OpenAI/AIML base_url provided without API key. Set AIML_API_KEY/OPENAI_API_KEY.")
+            raise ValueError(
+                f"OpenAI/AIML base_url provided without API key. "
+                f"Set AIML_API_KEY/OPENAI_API_KEY. base_url={base_url!r}"
+            )
 
         # If using Ollama, skip setting default OpenAI client
         if is_local_ollama:

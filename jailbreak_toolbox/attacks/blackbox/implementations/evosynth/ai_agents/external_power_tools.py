@@ -575,8 +575,7 @@ Focus on specific defensive techniques and why this particular attack failed - p
         return "Failed to get judge model analysis"
 
 
-@function_tool
-def access_runcontext_history(
+def access_runcontext_history_full(
     ctx: RunContextWrapper,
     history_depth: int = 4,
     max_total_chars: int = 450000
@@ -1027,10 +1026,14 @@ def test_tool_effectiveness(
             "stored_in_session": True,
         }
 @function_tool
-def access_runcontext_history(ctx: RunContextWrapper, history_depth: int = 5, max_total_chars: int = 4000) -> dict:
+def access_runcontext_history(ctx: RunContextWrapper, history_depth: int = 5) -> dict:
     """
     Return recent context history for agents. Mirrors output to tools log for observability.
+
+    max_total_chars is internalized to avoid schema-required arguments in tool calls.
+    Override via ctx.context.max_total_chars if needed.
     """
+    max_total_chars = getattr(getattr(ctx, "context", None), "max_total_chars", 4000)
     try:
         history = ctx.context.history[-history_depth:] if hasattr(ctx.context, "history") else []
         history_text = "\n".join(map(str, history))[:max_total_chars]

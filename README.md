@@ -151,6 +151,16 @@ config = EvosynthConfig(
     attack_model_base="llama3.2",          # must match `ollama list` on the server
 )
 ```
+
+### Tool-calling demo (Ollama)
+- A minimal example that mirrors the Ollama tool-support blog lives at `scripts/ollama_tool_support_demo.py`.
+- Run it with your host/model:
+  ```bash
+  PYTHONPATH=. OLLAMA_HOST=http://localhost:11434 OLLAMA_MODEL=llama3 \
+    python3 scripts/ollama_tool_support_demo.py
+  ```
+- Flow: send user + tools → model returns `tool_calls` (content often empty) → script executes tool (stubbed weather) → send tool result → model replies with text.
+- If you get “model not found”, pull the model or set `OLLAMA_MODEL` to one you have installed.
 ### Command Line Usage
 
 ```bash

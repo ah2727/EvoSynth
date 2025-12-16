@@ -74,6 +74,14 @@ class EvosynthConfig:
         if not self.logs_dir:
             ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             self.logs_dir = str(Path("./logs") / f"evosynth_{ts}_pid{os.getpid()}")
+        # Provide a sensible default model for local Ollama users instead of the
+        # development-only placeholder that frequently triggers 400 errors
+        if self.attack_model_base == "ollama/gpt-oss:120b-cloud":
+            self.attack_model_base = (
+                os.getenv("ATTACK_MODEL_BASE")
+                or os.getenv("OLLAMA_MODEL")
+                or "ollama/llama3"
+            )
 
 class EvosynthAttack(BaseAttack):
     """
@@ -108,10 +116,22 @@ class EvosynthAttack(BaseAttack):
         # Initialize orchestrator properly like the original setup
         self.orchestrator = None
         self._setup_orchestrator()
-        
+
+    @staticmethod
     def _extract_content(data: dict) -> str:
         if isinstance(data, tuple) and data:
             data = data[0]
+        # Ollama and some gateways return {"error": \"...\"} with 200 status;
+        # surface it so the caller doesn't see an empty string.
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, str) and err.strip():
+                return err
+            detail = data.get("detail")
+            if isinstance(detail, str) and detail.strip():
+                return detail
+            if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+                return detail["message"]
         # Ollama native: /api/chat
         msg = data.get("message")
         if isinstance(msg, dict) and isinstance(msg.get("content"), str):
@@ -180,8 +200,11 @@ class EvosynthAttack(BaseAttack):
 
         # Heuristic: treat Ollama endpoints (or ollama-prefixed models) as keyless
         is_ollama = _looks_like_ollama(base_url, self.config.attack_model_base)
-        if not is_ollama and not api_key:
-            raise ValueError("OpenAI/AIML base_url provided without API key. Set AIML_API_KEY/OPENAI_API_KEY.")
+        # If an API key is explicitly provided, treat the target as non-Ollama even if the name looks ollama-ish
+        if api_key:
+            is_ollama = False
+        if (not is_ollama) and (base_url and any(domain in base_url for domain in ["openai.com", "router.huggingface.co", "azure.com", "openai.azure.com","groq.com"])) and not api_key:
+            raise ValueError("OpenAI-style base_url provided without API key. Set OPENAI_API_KEY/AIML_API_KEY/HF_TOKEN or point to an Ollama host.")
 
         # If pointing at Ollama, register a compat client so agents never hit OpenAI
         if is_ollama:
@@ -254,6 +277,12 @@ class EvosynthAttack(BaseAttack):
                                                 pass
                                             time.sleep(min(2 ** attempt, 10))
                                             continue
+                                        if not resp.ok:
+                                            try:
+                                                # Surface server message to aid debugging mis-shaped payloads (common 400 cause)
+                                                print(f"[ollama compat] status={resp.status_code} body={resp.text[:500]}")
+                                            except Exception:
+                                                pass
                                         resp.raise_for_status()
                                         return resp.json()
                                     except Exception as e:
@@ -267,6 +296,11 @@ class EvosynthAttack(BaseAttack):
                             data = await asyncio.to_thread(_post)
                             content = EvosynthAttack._extract_content(data)
                             tool_calls_raw = (data.get("message") or {}).get("tool_calls") or []
+                            if not tool_calls_raw:
+                                choices = data.get("choices") or []
+                                if choices:
+                                    msg = (choices[0] or {}).get("message") or {}
+                                    tool_calls_raw = msg.get("tool_calls") or []
                             tool_calls = _normalize_tool_calls(tool_calls_raw)
                             resp_obj = _OllamaCompatClient._RespObj(content, tool_calls=tool_calls)
                             try:
@@ -295,6 +329,8 @@ class EvosynthAttack(BaseAttack):
             external_client = _OllamaCompatClient(base_url or "http://192.168.100.37:10101")
         else:
             client_kwargs = {"timeout": 30000000}
+            # Respect rate limits better by enabling client-side retries/backoff
+            client_kwargs["max_retries"] = int(os.getenv("OPENAI_MAX_RETRIES", "8"))
             if api_key:
                 client_kwargs["api_key"] = api_key
             if base_url:
@@ -546,6 +582,9 @@ __description__ = "Multi-Agent Jailbreak Attack System for AI Security Research"
 
 def _looks_like_ollama(base_url: Optional[str], model_name: Optional[str] = None) -> bool:
     """Heuristic to detect Ollama endpoints."""
+    # Never treat OpenAI/HF router/Azure endpoints as Ollama even if model name hints so
+    if base_url and any(domain in base_url for domain in ["openai.com", "router.huggingface.co", "azure.com", "openai.azure.com","groq.com"]):
+        return False
     if model_name and model_name.lower().startswith("ollama/"):
         return True
     if not base_url:

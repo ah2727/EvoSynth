@@ -120,117 +120,34 @@ For best results, we recommend using router platforms that provide unified acces
 Set your `base_url` parameter to the router's endpoint when initializing OpenAIModel:
 
 ---
-### ollama setup 
-- **Ollama** — run models locally (or on a home server) and connect via HTTP
+### Ollama setup (copy/paste)
 
----
-
-### Ollama Setup (Download • Pull a model • Connect)
-
-#### 1) Install Ollama
-
-**Linux**
 ```bash
+# 1) Install (Linux)
 curl -fsSL https://ollama.com/install.sh | sh
-macOS / Windows
 
-Download and install from: https://ollama.com/download
-
-2) Pull a model
-bash
-Copy code
+# 2) Pull a model
 ollama pull llama3.2
-# Examples: llama3.1, gemma3, mistral, qwen2.5, ...
-Use an exact tag that exists on your Ollama server (ollama list).
 
-3) Start the Ollama server
-Local (default)
-
-bash
-Copy code
+# 3) Start server (local)
 ollama serve
-Expose to your home LAN (optional — be careful)
 
-bash
-Copy code
-# Listen on all interfaces
-OLLAMA_HOST=0.0.0.0:11434 ollama serve
-
-# Or listen only on a specific LAN IP (recommended)
+# --- OR expose to your home LAN (optional; LAN-only firewall recommended) ---
+# OLLAMA_HOST=0.0.0.0:11434 ollama serve
 # OLLAMA_HOST=192.168.1.50:11434 ollama serve
-4) Point EvoSynth to Ollama
-EvoSynth uses:
 
-POST {base_url}/api/chat
-
-So your base_url must be the host root (no /api, no /v1):
-
-python
-Copy code
-config = EvosynthConfig(
-    base_url="http://192.168.1.50:11434",  # <-- no /api, no /v1
-    attack_model_base="llama3.2",          # <-- must match `ollama list` on the server
-)
-5) Quick connectivity test (from the client machine)
-bash
-Copy code
+# 4) Test from another machine
 curl http://192.168.1.50:11434/api/tags
----
-## Quick Start
+curl http://192.168.1.50:11434/api/chat \
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"ping"}],"stream":false}'
+  
+# 5) Use in EvoSynth
+from jailbreak_toolbox.attacks.blackbox.implementations.evosynth import EvosynthConfig
 
-### Environment Setup
-
-Create a `.env` file with your API credentials:
-
-
-### Basic Usage
-
-```python
-import asyncio
-import os
-from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
-from jailbreak_toolbox.attacks.blackbox.implementations.evosynth import EvosynthAttack, EvosynthConfig
-from dotenv import load_dotenv
-load_dotenv()
-
-async def main():
-    # Initialize models (using router platform like OpenRouter or BoyueRichData)
-    target_model = OpenAIModel(
-        model_name="gpt-4o",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        base_url=os.getenv("OPENAI_BASE_URL")  # or your router's endpoint
-    )
-    judge_model = OpenAIModel(
-        model_name="gpt-4o",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        base_url=os.getenv("OPENAI_BASE_URL")
-    )
-
-    # Configure attack
-    config = EvosynthConfig(
-        max_iterations=15,
-        success_threshold=5,
-        pipeline="full_pipeline",
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        base_url=os.getenv("OPENAI_BASE_URL"),
-        attack_model_base="deepseek-chat",
-        langfuse_host=None
-    )
-
-    # Create judge and attack
-    attack = EvosynthAttack(
-        target_model=target_model,
-        judge=judge_model,
-        config=config,
-    )
-
-    # Execute attack (async)
-    result = await attack.attack("Your test prompt here")
-    print(f"Attack result: {result}")
-
-# Run the async function
-asyncio.run(main())
-```
+config = EvosynthConfig(
+    base_url="http://192.168.1.50:11434",  # no /api, no /v1
+    attack_model_base="llama3.2",          # must match `ollama list` on the server
+)
 
 ### Command Line Usage
 

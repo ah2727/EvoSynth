@@ -106,6 +106,37 @@ class EvosynthAttack(BaseAttack):
         # Initialize orchestrator properly like the original setup
         self.orchestrator = None
         self._setup_orchestrator()
+        
+    def _extract_content(data: dict) -> str:
+        if isinstance(data, tuple) and data:
+            data = data[0]
+        # Ollama native: /api/chat
+        msg = data.get("message")
+        if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+            return msg["content"]
+
+        # OpenAI-compatible: /v1/chat/completions
+        choices = data.get("choices")
+        if isinstance(choices, list) and choices:
+            c0 = choices[0] or {}
+            m = c0.get("message") or {}
+            if isinstance(m, dict) and isinstance(m.get("content"), str):
+                return m["content"]
+
+            # Sometimes streaming-like shapes return "delta"
+            d = c0.get("delta") or {}
+            if isinstance(d, dict) and isinstance(d.get("content"), str):
+                return d["content"]
+
+        # Ollama native: /api/generate
+        if isinstance(data.get("response"), str):
+            return data["response"]
+
+        # Fallback (last resort)
+        if isinstance(data.get("content"), str):
+            return data["content"]
+
+        return ""
 
     def _setup_orchestrator(self):
         """Setup the autonomous orchestrator with proper configuration like the original."""
@@ -114,48 +145,91 @@ class EvosynthAttack(BaseAttack):
         api_key = self.config.openai_api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
         base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST")
 
-        if (not base_url or "localhost" not in base_url) and not api_key:
+        # Heuristic: treat Ollama endpoints (or ollama-prefixed models) as keyless
+        is_ollama = _looks_like_ollama(base_url, self.config.attack_model_base)
+        if not is_ollama and not api_key:
             raise ValueError("OpenAI/AIML base_url provided without API key. Set AIML_API_KEY/OPENAI_API_KEY.")
 
-        # If pointing at local Ollama, register a compat client so agents never hit OpenAI
-        if base_url and ("localhost:11434" in base_url or "ollama" in base_url):
+        # If pointing at Ollama, register a compat client so agents never hit OpenAI
+        if is_ollama:
+            norm_host = _normalize_ollama_host(base_url)
             import openai
             openai.api_key = ""  # clear any env key that would trigger OpenAI calls
-            openai.base_url = base_url
+            openai.base_url = norm_host
 
             class _OllamaCompatClient:
                 def __init__(self, host):
-                    self.host = host.rstrip("/")
+                    self.host = _normalize_ollama_host(host)
                     self.api_key = ""
                     self.base_url = self.host
-                    class Chat:
-                        def __init__(self, outer):
-                            class Completions:
-                                def __init__(self, outer):
-                                    self.outer = outer
-                                def create(self, model=None, messages=None, **kwargs):
-                                    import requests
-                                    payload = {
-                                        "model": model,
-                                        "messages": messages or [],
-                                        "stream": False,
-                                        "options": {}
-                                    }
-                                    resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
-                                    resp.raise_for_status()
-                                    data = resp.json()
-                                    content = data.get("message", {}).get("content", "")
-                                    class _Msg: pass
-                                    m = _Msg(); m.content = content
-                                    class _Choice: pass
-                                    c = _Choice(); c.message = m
-                                    class _Resp: pass
-                                    r = _Resp(); r.choices = [c]
-                                    return r
-                            self.completions = Completions(outer)
-                    self.chat = Chat(self)
+                    self.chat = self.Chat(self)
+                    self.responses = self.Responses(self)
 
-            external_client = _OllamaCompatClient(base_url or "http://localhost:11434")
+                class _RespObj:
+                    def __init__(self, content: str):
+                        from types import SimpleNamespace
+                        self.choices = [SimpleNamespace(message=SimpleNamespace(content=content))]
+
+                class Chat:
+                    def __init__(self, outer):
+                        self.completions = self.Completions(outer)
+
+                    class Completions:
+                        def __init__(self, outer):
+                            self.outer = outer
+                        async def create(self, model=None, messages=None, **kwargs):
+                            """
+                            Async-compatible wrapper that mimics OpenAI chat completions response.
+                            Uses a thread to keep requests.post blocking call off the event loop.
+                            """
+                            import requests, asyncio
+
+                            payload = {
+                                "model": model,
+                                "messages": messages or [],
+                                "stream": False,
+                                "options": {}
+                            }
+
+                            def _post():
+                                import time
+                                last_err = None
+                                for attempt in range(5):
+                                    try:
+                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
+                                        if resp.status_code == 429:
+                                            time.sleep(min(2 ** attempt, 10))
+                                            continue
+                                        resp.raise_for_status()
+                                        return resp.json()
+                                    except Exception as e:
+                                        last_err = e
+                                        time.sleep(min(2 ** attempt, 10))
+                                # Ensure we raise an actual exception
+                                if last_err:
+                                    raise last_err
+                                raise RuntimeError("Unknown error contacting Ollama")
+
+                            data = await asyncio.to_thread(_post)
+                            content = EvosynthAttack._extract_content(data)
+                            resp_obj = _OllamaCompatClient._RespObj(content)
+                            try:
+                                print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]}")
+                            except Exception:
+                                pass
+                            return resp_obj
+
+                class Responses:
+                    def __init__(self, outer):
+                        self.outer = outer
+
+                    async def create(self, model=None, input=None, **kwargs):
+                        # Map Responses API call to chat completions path
+                        return await _OllamaCompatClient.Chat.Completions(self.outer).create(
+                            model=model, messages=input or [], **kwargs
+                        )
+
+            external_client = _OllamaCompatClient(base_url or "http://192.168.100.37:10101")
         else:
             client_kwargs = {"timeout": 30000000}
             if api_key:
@@ -194,6 +268,7 @@ class EvosynthAttack(BaseAttack):
         orchestrator_config = {
             'openai_api_key': api_key,
             'openai_client': external_client,
+            'base_url': base_url,
             'model_objects': {
                 'attack_model_base': getattr(self.model, "model_name", self.config.attack_model_base),
                 'judge_model_base': getattr(self.judge_model, "model_name", self.config.judge_model_name),
@@ -405,3 +480,28 @@ __all__ = [
 __version__ = "1.0.0"
 __author__ = "Evosynth Team"
 __description__ = "Multi-Agent Jailbreak Attack System for AI Security Research"
+def _looks_like_ollama(base_url: Optional[str], model_name: Optional[str] = None) -> bool:
+    """Heuristic to detect Ollama endpoints."""
+    if model_name and model_name.lower().startswith("ollama/"):
+        return True
+    if not base_url:
+        return False
+    return any(sig in base_url for sig in ["ollama", "localhost:11434", "/api/chat", "/api/generate"])
+
+
+def _normalize_ollama_host(raw_host: Optional[str]) -> str:
+    """Strip trailing /api/chat etc. and ensure scheme."""
+    from urllib.parse import urlparse, urlunparse
+
+    if not raw_host:
+        raw_host = "http://localhost:11434"
+    if not raw_host.startswith(("http://", "https://")):
+        raw_host = f"http://{raw_host}"
+    parsed = urlparse(raw_host)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/chat"):
+        path = path[: -len("/api/chat")]
+    elif path.endswith("/api/generate"):
+        path = path[: -len("/api/generate")]
+    parsed = parsed._replace(path=path, params="", query="", fragment="")
+    return urlunparse(parsed).rstrip("/")

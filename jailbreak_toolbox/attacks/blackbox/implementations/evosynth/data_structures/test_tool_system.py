@@ -29,15 +29,12 @@ def simple_attack(query: str) -> str:
     # Validate the tool
     validation_result = tool.validate_tool_function()
     print(f"Tool validation: {validation_result}")
-    
-    if validation_result["success"]:
-        # Execute the tool
-        result = tool.execute("test query")
-        print(f"Tool execution result: {result}")
-        return True
-    else:
-        print(f"Tool validation failed: {validation_result['error']}")
-        return False
+    assert validation_result["success"], f"Tool validation failed: {validation_result.get('error')}"
+
+    # Execute the tool
+    result = tool.execute("test query")
+    print(f"Tool execution result: {result}")
+    assert "Attack prompt: test query" in result
 
 def test_evolution_context():
     """Test evolution context functionality"""
@@ -64,16 +61,17 @@ def advanced_attack(query: str) -> str:
     # Test retrieval by ID
     retrieved_tool = context.get_tool(tool.tool_id)
     print(f"Retrieved by ID: {retrieved_tool.tool_name if retrieved_tool else 'None'}")
+    assert retrieved_tool is tool
     
     # Test retrieval by name
     retrieved_tool = context.get_tool_by_name(tool.tool_name)
     print(f"Retrieved by name: {retrieved_tool.tool_name if retrieved_tool else 'None'}")
+    assert retrieved_tool is tool
     
     # Test retrieval by identifier
     retrieved_tool = context.get_tool_by_identifier(tool.tool_name)
     print(f"Retrieved by identifier: {retrieved_tool.tool_name if retrieved_tool else 'None'}")
-    
-    return True
+    assert retrieved_tool is tool
 
 def test_unified_context():
     """Test unified context functionality"""
@@ -109,8 +107,7 @@ def unified_attack(query: str) -> str:
     # Test execution
     result = context.execute_tool(tool.tool_name, "test query")
     print(f"Execution result: {result}")
-    
-    return True
+    assert "Unified attack: test query" in result
 
 def test_function_validation():
     """Test function validation rules"""
@@ -130,6 +127,7 @@ def valid_tool(query: str) -> str:
     
     validation_result = valid_tool.validate_tool_function()
     print(f"Valid tool validation: {validation_result['success']}")
+    assert validation_result["success"] is True
     
     # Test invalid function (starts with _)
     invalid_code = '''
@@ -149,12 +147,10 @@ def valid_tool(query: str) -> str:
     
     validation_result = invalid_tool.validate_tool_function()
     print(f"Invalid tool validation (should find valid functions): {validation_result['success']}")
-    if validation_result['success']:
-        print(f"Found {len(validation_result['valid_functions'])} valid functions")
-        for func_name, func in validation_result['valid_functions']:
-            print(f"  - {func_name}")
-    
-    return True
+    assert validation_result["success"] is True
+    assert len(validation_result.get("valid_functions", [])) >= 1
+
+# main() kept for manual runs but ignored by pytest
 
 def main():
     """Run all tests"""

@@ -3,9 +3,32 @@ from __future__ import annotations
 import os
 import requests
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse, urlunparse
+
+
+def _normalize_ollama_host(raw_host: Optional[str]) -> str:
+    """
+    Ensure host has a scheme and strip any trailing Ollama endpoint paths
+    (e.g., '/api/chat' or '/api/generate') so we can append '/api/chat' safely.
+    """
+    if not raw_host:
+        raw_host = "http://localhost:11434"
+    if not raw_host.startswith(("http://", "https://")):
+        raw_host = f"http://{raw_host}"
+
+    parsed = urlparse(raw_host)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/chat"):
+        path = path[: -len("/api/chat")]
+    elif path.endswith("/api/generate"):
+        path = path[: -len("/api/generate")]
+
+    parsed = parsed._replace(path=path, params="", query="", fragment="")
+    return urlunparse(parsed).rstrip("/")
 
 from ..base_model import BaseModel
 from ...core.registry import model_registry
+from ...utils.llm_logger import log_messages
 
 
 @model_registry.register("ollama")
@@ -14,7 +37,7 @@ class OllamaModel(BaseModel):
     Minimal Ollama chat wrapper using the local Ollama HTTP API.
 
     Defaults:
-      host: http://localhost:11434  (override with OLLAMA_HOST)
+      host: http://192.168.100.37:10101  (override with OLLAMA_HOST)
       model_name: llama3
     """
 
@@ -30,11 +53,9 @@ class OllamaModel(BaseModel):
         super().__init__(**kwargs)
         self.model_name = model_name
 
-        # Normalize host so `requests` always sees a valid URL (scheme required)
-        raw_host = host or os.getenv("OLLAMA_HOST") or "http://localhost:11434"
-        if not raw_host.startswith(("http://", "https://")):
-            raw_host = f"http://{raw_host}"
-        self.host = raw_host.rstrip("/")
+        # Normalize host so `requests` always sees a valid URL (scheme required) and no trailing /api/chat
+        raw_host = host or os.getenv("OLLAMA_HOST") or "http://192.168.100.37:10101"
+        self.host = _normalize_ollama_host(raw_host)
         self.system_message = system_message
         self.temperature = temperature
         self.timeout = timeout
@@ -90,5 +111,16 @@ class OllamaModel(BaseModel):
 
         if maintain_history:
             self.conversation_history.append({"role": "assistant", "content": content})
+
+        # Log prompt/response for observability
+        try:
+            log_messages(
+                log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+                model_name=self.model_name,
+                messages=messages,
+                response=content,
+            )
+        except Exception:
+            pass
 
         return content

@@ -285,6 +285,8 @@ class AimlAPIModel(OpenAIModel):
                             input=messages,
                             **{k: v for k, v in self.chat_kwargs.items() if k != "tools"}  # responses doesn't accept tools param
                         )
+                        if isinstance(resp, tuple) and resp:
+                            resp = resp[0]
                         # Responses API returns output[0].content list
                         if resp.output and resp.output[0].content:
                             first = resp.output[0].content[0]
@@ -300,24 +302,36 @@ class AimlAPIModel(OpenAIModel):
 
                 # Legacy Chat Completions
                 response = self.client.chat.completions.create(**chat_params)
-                
+
+                # Normalize shim responses that might come back as (resp, ...) tuples
+                if isinstance(response, tuple) and response:
+                    response = response[0]
                 response_text = response.choices[0].message.content
+
                 self._log_session("user", messages)
                 self._log_session("assistant", response_text)
-                
+
+                # Persist prompt/response for observability
+                log_messages(
+                    log_dir=self._log_path or "./logs",
+                    model_name=self.model_name,
+                    messages=messages,
+                    response=response_text,
+                )
+
                 # Add assistant response to history if maintaining history
                 if maintain_history:
                     self.add_assistant_message(response_text)
-                
+
                 return response_text
-            
+
             except Exception as e:
                 print(f"Unexpected error: {str(e)}")
                 if attempt == self.retry_attempts - 1:
                     return f"Error: {str(e)}"
                 # Note: time.sleep removed to prevent blocking in asyncio environments
                 # For retry delays, the calling async code should handle timing
-        
+
         return "Error: Failed to get response from model"
     
     def add_user_message(self, content: Union[str, List[Dict]]) -> None:

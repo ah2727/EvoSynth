@@ -135,6 +135,10 @@ class MultiThreadedOpenAIModel(MultiThreadedModel):
             max_tokens=self.max_tokens
         )
         
+        if isinstance(response, tuple) and response:
+            response = response[0]
+        if isinstance(response, tuple) and response:
+            response = response[0]
         response_text = response.choices[0].message.content
         
         # Add assistant response to history if maintaining history

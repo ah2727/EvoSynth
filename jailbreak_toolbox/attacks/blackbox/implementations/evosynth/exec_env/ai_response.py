@@ -77,6 +77,9 @@ def generate_ai_response(
             max_tokens=max_tokens
         )
         
+        # Normalize tuple-wrapped responses from shim clients
+        if isinstance(response, tuple) and response:
+            response = response[0]
         return response.choices[0].message.content.strip()
         
     except ImportError:

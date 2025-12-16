@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from openai import AsyncOpenAI
 
 from jailbreak_toolbox.models.base_model import BaseModel
+from jailbreak_toolbox.utils.llm_logger import log_messages
 import os
 from datetime import datetime
 
@@ -88,6 +89,8 @@ class AsyncOpenAIModel(BaseModel):
                 temperature=temperature,
                 **call_kwargs,
             )
+            if isinstance(resp, tuple) and resp:
+                resp = resp[0]
             msg = resp.choices[0].message
             response_text = (msg.content or "").strip()
             self._log_session("user", text_input)
@@ -101,9 +104,17 @@ class AsyncOpenAIModel(BaseModel):
             temperature=temperature,
             **call_kwargs,
         )
+        if isinstance(resp, tuple) and resp:
+            resp = resp[0]
         response_text = _extract_text_from_responses(resp)
         self._log_session("user", text_input)
         self._log_session("assistant", response_text)
+        log_messages(
+            log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+            model_name=self.model_name,
+            messages=[{"role": "user", "content": text_input}],
+            response=response_text,
+        )
         return response_text
 
     def query(

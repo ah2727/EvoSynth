@@ -11,6 +11,22 @@ from pprint import pformat
 
 from agents import Agent, function_tool, RunContextWrapper, OpenAIChatCompletionsModel, trace
 import requests
+from urllib.parse import urlparse, urlunparse
+
+
+def _normalize_ollama_host(raw_host: str) -> str:
+    if not raw_host:
+        raw_host = "http://localhost:11434"
+    if not raw_host.startswith(("http://", "https://")):
+        raw_host = f"http://{raw_host}"
+    parsed = urlparse(raw_host)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/chat"):
+        path = path[: -len("/api/chat")]
+    elif path.endswith("/api/generate"):
+        path = path[: -len("/api/generate")]
+    parsed = parsed._replace(path=path, params="", query="", fragment="")
+    return urlunparse(parsed).rstrip("/")
 
 
 from .master_coordinator_agent import MasterCoordinatorAgent
@@ -58,42 +74,115 @@ class AutonomousOrchestrator:
         # Set up OpenAI model for agents
         # Decide OpenAI vs Ollama mode
         no_api_key = not os.getenv("OPENAI_API_KEY") and not os.getenv("AIML_API_KEY") and not config.get("openai_api_key")
-        base_url_env = os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST") or ""
-        using_ollama = ("ollama" in base_url_env) or ("localhost:11434" in base_url_env)
+        base_url_env = config.get("base_url") or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST") or ""
+        model_obj = config.get("model_objects", {}) if isinstance(config, dict) else {}
+        attack_model_name = model_obj.get("attack_model_base", "")
+        target_model_name = model_obj.get("target_model_name", "")
+        judge_model_name = model_obj.get("judge_model_name", "")
+        using_ollama = (
+            ("ollama" in base_url_env)
+            or ("localhost:11434" in base_url_env)
+            or base_url_env.endswith("/api/chat")
+            or base_url_env.endswith("/api/generate")
+            or str(attack_model_name).lower().startswith("ollama/")
+            or str(target_model_name).lower().startswith("ollama/")
+            or str(judge_model_name).lower().startswith("ollama/")
+        )
 
         if using_ollama or (no_api_key and config.get("openai_client") is None):
             # Provide a lightweight OpenAI-compatible client that calls Ollama /api/chat
             class _OllamaCompatClient:
                 def __init__(self, host):
-                    self.host = host.rstrip("/")
+                    self.host = _normalize_ollama_host(host)
                     self.api_key = ""
                     self.base_url = self.host
-                    class Chat:
+                    self.chat = self.Chat(self)
+                    self.responses = self.Responses(self)
+
+                class _RespObj:
+                    def __init__(self, content: str):
+                        from types import SimpleNamespace
+                        self.choices = [SimpleNamespace(message=SimpleNamespace(content=content))]
+
+                @staticmethod
+                def _extract_content(data: dict) -> str:
+                    if isinstance(data, tuple) and data:
+                        data = data[0]
+                    msg = data.get("message")
+                    if isinstance(msg, dict) and isinstance(msg.get("content"), str):
+                        return msg["content"]
+                    choices = data.get("choices")
+                    if isinstance(choices, list) and choices:
+                        c0 = choices[0] or {}
+                        m = c0.get("message") or {}
+                        if isinstance(m, dict) and isinstance(m.get("content"), str):
+                            return m["content"]
+                        d = c0.get("delta") or {}
+                        if isinstance(d, dict) and isinstance(d.get("content"), str):
+                            return d["content"]
+                    if isinstance(data.get("response"), str):
+                        return data["response"]
+                    if isinstance(data.get("content"), str):
+                        return data["content"]
+                    return ""
+
+                class Chat:
+                    def __init__(self, outer):
+                        self.completions = self.Completions(outer)
+
+                    class Completions:
                         def __init__(self, outer):
-                            class Completions:
-                                def __init__(self, outer):
-                                    self.outer = outer
-                                def create(self, model=None, messages=None, **kwargs):
-                                    payload = {
-                                        "model": model,
-                                        "messages": messages or [],
-                                        "stream": False,
-                                        "options": {}
-                                    }
-                                    resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
-                                    resp.raise_for_status()
-                                    data = resp.json()
-                                    content = data.get("message", {}).get("content", "")
-                                    class _Msg: pass
-                                    m = _Msg(); m.content = content
-                                    class _Choice: pass
-                                    c = _Choice(); c.message = m
-                                    class _Resp: pass
-                                    r = _Resp(); r.choices = [c]
-                                    return r
-                            self.completions = Completions(outer)
-                    self.chat = Chat(self)
-            compat_client = _OllamaCompatClient(base_url_env or "http://localhost:11434")
+                            self.outer = outer
+                        async def create(self, model=None, messages=None, **kwargs):
+                            """
+                            Async-compatible wrapper that mimics OpenAI chat completions response.
+                            Uses a thread to keep the blocking HTTP call off the event loop.
+                            """
+                            import asyncio
+
+                            payload = {
+                                "model": model,
+                                "messages": messages or [],
+                                "stream": False,
+                                "options": {}
+                            }
+
+                            def _post():
+                                import time
+                                last_err = None
+                                for attempt in range(5):
+                                    try:
+                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=120)
+                                        if resp.status_code == 429:
+                                            time.sleep(min(2 ** attempt, 10))
+                                            continue
+                                        resp.raise_for_status()
+                                        return resp.json()
+                                    except Exception as e:
+                                        last_err = e
+                                        time.sleep(min(2 ** attempt, 10))
+                                if last_err:
+                                    raise last_err
+                                raise RuntimeError("Unknown error contacting Ollama")
+
+                            data = await asyncio.to_thread(_post)
+                            content = _OllamaCompatClient._extract_content(data)
+                            resp_obj = _OllamaCompatClient._RespObj(content)
+                            try:
+                                print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]}")
+                            except Exception:
+                                pass
+                            return resp_obj
+
+                class Responses:
+                    def __init__(self, outer):
+                        self.outer = outer
+
+                    async def create(self, model=None, input=None, **kwargs):
+                        return await _OllamaCompatClient.Chat.Completions(self.outer).create(
+                            model=model, messages=input or [], **kwargs
+                        )
+            compat_client = _OllamaCompatClient(base_url_env or "http://192.168.100.37:10101")
             self.openai_model = OpenAIChatCompletionsModel(
                 model=config.get('model_objects', {}).get('attack_model_base', 'ollama'),
                 openai_client=compat_client,
@@ -225,9 +314,17 @@ class AutonomousOrchestrator:
         Returns:
             Complete session results and analysis
         """
+        # Ensure there is an active event loop (defensive for spawned processes/threads)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         # Setup queued logger once per session
         await self.session_logger.start()
         self.log_filename = self.session_logger.log_filename
+        print(f"[AutonomousOrchestrator] session log: {self.log_filename}")
 
 
         session_results = {
@@ -600,7 +697,13 @@ class AutonomousOrchestrator:
         Focus on thorough exploration and intelligence gathering.
         """
         
-        result = await Runner.run(agent, input_text, context=self.context, max_turns=1000)
+        try:
+            result = await Runner.run(agent, input_text, context=self.context, max_turns=1000)
+        except Exception as e:
+            import traceback
+            print(f"Error in Reconnaissance phase (full traceback below): {e}")
+            traceback.print_exc()
+            raise
         self._log_agent_conversation("reconnaissance", result)
         intelligence_count = len(self.context.session_data.get('jailbreak_intelligence', []))
         print(f"Reconnaissance completed: {intelligence_count} intelligence items gathered")

@@ -127,7 +127,16 @@ def make_openai_model_from_config(cfg: Dict[str, Any], api_key: str, base_url: s
     resolved_api_key = cfg.get("api_key", api_key)
 
     # If targeting Ollama (host provided or model name prefixed), use OllamaModel
-    if (resolved_base_url and ("ollama" in resolved_base_url or "localhost:11434" in resolved_base_url)) or model_name.lower().startswith("ollama/"):
+    looks_like_ollama = (
+        (resolved_base_url and (
+            "ollama" in resolved_base_url
+            or "localhost:11434" in resolved_base_url
+            or resolved_base_url.endswith("/api/chat")
+            or resolved_base_url.endswith("/api/generate")
+        ))
+        or model_name.lower().startswith("ollama/")
+    )
+    if looks_like_ollama:
         return OllamaModel(
             model_name=model_name.split("/", 1)[-1] if model_name.lower().startswith("ollama/") else model_name,
             host=resolved_base_url,
@@ -229,6 +238,10 @@ async def run_async_experiment(
 
     try:
         start = time.time()
+
+        # If using Ollama/local, cap concurrency to avoid 429s
+        if base_url and ("ollama" in base_url or "localhost:11434" in base_url or base_url.endswith("/api/chat") or base_url.endswith("/api/generate")):
+            max_concurrent_queries = min(max_concurrent_queries, 4)
 
         # Create AsyncOrchestrator
         print(AttackClass,type(AttackClass))
@@ -375,7 +388,7 @@ def process_wrapper(model_config: Dict[str, Any], attack_data: tuple, args_dict:
     from pathlib import Path
 
     # If running in Ollama mode, strip remote API keys to avoid accidental OpenAI calls
-    is_ollama = ("ollama" in (args_dict.get("base_url") or "")) or ("localhost:11434" in (args_dict.get("base_url") or "")) \
+    is_ollama = ("ollama" in (args_dict.get("base_url") or "")) or ("http://192.168.100.37:10101" in (args_dict.get("base_url") or "")) \
         or str(args_dict.get("attacker_model", "")).lower().startswith("ollama/")
     if is_ollama:
         os.environ.pop("OPENAI_API_KEY", None)
@@ -410,7 +423,7 @@ def process_wrapper(model_config: Dict[str, Any], attack_data: tuple, args_dict:
         "temperature": 0.0,
     }
     # Select OllamaModel when base_url is Ollama or model prefixed with ollama/
-    if (args.base_url and ("ollama" in args.base_url or "localhost:11434" in args.base_url)) or args.judge_model.lower().startswith("ollama/"):
+    if (args.base_url and ("ollama" in args.base_url or "http://192.168.100.37:10101" in args.base_url)) or args.judge_model.lower().startswith("ollama/"):
         judge_model = OllamaModel(
             model_name=args.judge_model.split("/", 1)[-1] if args.judge_model.lower().startswith("ollama/") else args.judge_model,
             host=args.base_url,
@@ -498,10 +511,12 @@ async def main():
         ("Evosynth", "EvosynthAttack", {
             "config_dict": {
                 "attack_model_base": args.attacker_model,
+                "base_url": args.base_url,
                 "max_iterations": 20,  # Hardcoded
                 "success_threshold": 5,  # Hardcoded
                 "pipeline": "full_pipeline",  # Hardcoded
-                "disable_print_redirection": True,  # Hardcoded
+                # Enable session logger so Ollama responses & traces are captured
+                "disable_print_redirection": False,
                 "logs_dir": args.logs_dir,
                 "enable_langfuse": False  # Hardcoded
             },

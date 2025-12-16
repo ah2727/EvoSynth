@@ -52,6 +52,8 @@ def send_chat(
     if use_responses:
         try:
             resp = client.responses.create(model=model, input=msgs, **kwargs)
+            if isinstance(resp, tuple) and resp:
+                resp = resp[0]
             # Responses API returns output[0].content list
             text = ""
             if resp.output and resp.output[0].content:
@@ -66,7 +68,15 @@ def send_chat(
 
     # Legacy Chat Completions
     resp = client.chat.completions.create(model=model, messages=msgs, **kwargs)
-    text = resp.choices[0].message.content if resp.choices else ""
+
+    # Some shim clients may return a tuple; normalize it.
+    if isinstance(resp, tuple) and resp:
+        resp = resp[0]
+
+    # Normalize tuple wrappers
+    if isinstance(resp, tuple) and resp:
+        resp = resp[0]
+    text = resp.choices[0].message.content if getattr(resp, "choices", None) else ""
     return {"content": text, "raw": resp, "endpoint": "chat.completions"}
 
 

@@ -109,8 +109,11 @@ class AsyncOrchestrator:
         self.base_logs_dir = Path(base_logs_dir)
         self.enable_progress_bars = enable_progress_bars
         self.model_name = model_name or getattr(model, 'model_name', model.__class__.__name__)
-        # ✅ default dict when None
-        self.config =  EvosynthConfig()
+        # Prefer caller-provided EvosynthConfig (keeps CLI/base_url overrides), else default
+        if isinstance(self.attack_kwargs.get("config"), EvosynthConfig):
+            self.config = self.attack_kwargs["config"]
+        else:
+            self.config = EvosynthConfig()
         self.judge_model = judge_model
 
 
@@ -135,11 +138,19 @@ class AsyncOrchestrator:
         api_key = self.config.openai_api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
         base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST")
 
-        if (not base_url or "localhost" not in base_url) and not api_key:
+        # Permit Ollama-style endpoints without an API key; still require key for remote services
+        is_local_ollama = base_url and (
+            "ollama" in base_url
+            or "localhost:11434" in base_url
+            or base_url.endswith("/api/chat")
+            or base_url.endswith("/api/generate")
+            or "192.168.100.37:10101" in base_url
+        )
+        if not is_local_ollama and not api_key:
             raise ValueError("OpenAI/AIML base_url provided without API key. Set AIML_API_KEY/OPENAI_API_KEY.")
 
-        # If using local Ollama, skip setting default OpenAI client
-        if base_url and ("localhost:11434" in base_url or "ollama" in base_url):
+        # If using Ollama, skip setting default OpenAI client
+        if is_local_ollama:
             external_client = None
         else:
             client_kwargs = {"timeout": 30000000}
@@ -583,7 +594,12 @@ class AsyncOrchestrator:
             Tuple of (successful_count, failed_count)
         """
         if isinstance(attack_result, Exception):
+            import traceback
             print(f"⚠️  Exception in attack: {attack_result}")
+            try:
+                traceback.print_exception(type(attack_result), attack_result, attack_result.__traceback__)
+            except Exception:
+                pass
             return 0, 1
 
         query_index, query, result, log_dir = attack_result

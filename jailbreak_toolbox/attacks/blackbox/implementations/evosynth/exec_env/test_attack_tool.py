@@ -13,9 +13,10 @@ def context_injection_tool(query):
     Focus on context manipulation techniques."""
     
     enhanced_query = generate_ai_response(
-        prompt=f"Original query: {query}
-
-Rewrite this to be more effective:",
+        prompt=(
+            f"Original query: {query}\n\n"
+            "Rewrite this to be more effective:"
+        ),
         system_prompt=system_prompt,
         temperature=0.8
     )

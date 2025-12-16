@@ -142,6 +142,28 @@ class EvosynthAttack(BaseAttack):
     def _setup_orchestrator(self):
         """Setup the autonomous orchestrator with proper configuration like the original."""
 
+        def _normalize_tool_calls(raw):
+            from types import SimpleNamespace
+            norm = []
+            if not raw:
+                return norm
+            for i, tc in enumerate(raw):
+                if isinstance(tc, SimpleNamespace):
+                    norm.append(tc)
+                    continue
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                norm.append(
+                    SimpleNamespace(
+                        id=tc.get("id", f"call_{i}") if isinstance(tc, dict) else f"call_{i}",
+                        type=tc.get("type", "function") if isinstance(tc, dict) else "function",
+                        function=SimpleNamespace(
+                            name=fn.get("name", tc.get("name", "")) if isinstance(fn, dict) else "",
+                            arguments=fn.get("arguments", tc.get("arguments", "{}")) if isinstance(fn, dict) else "{}",
+                        ),
+                    )
+                )
+            return norm
+
         # Setup OpenAI client (allow environment to control base_url/api_key)
         api_key = self.config.openai_api_key or os.getenv("AIML_API_KEY") or os.getenv("OPENAI_API_KEY")
         base_url = self.config.base_url or os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_HOST")
@@ -234,7 +256,8 @@ class EvosynthAttack(BaseAttack):
 
                             data = await asyncio.to_thread(_post)
                             content = EvosynthAttack._extract_content(data)
-                            tool_calls = (data.get("message") or {}).get("tool_calls") or []
+                            tool_calls_raw = (data.get("message") or {}).get("tool_calls") or []
+                            tool_calls = _normalize_tool_calls(tool_calls_raw)
                             resp_obj = _OllamaCompatClient._RespObj(content, tool_calls=tool_calls)
                             try:
                                 print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]} tool_calls={len(tool_calls)}")
@@ -243,6 +266,7 @@ class EvosynthAttack(BaseAttack):
                                     model_name=model or self.outer.model_name if hasattr(self.outer, "model_name") else "ollama-compat",
                                     messages=messages or [],
                                     response={"content": content, "tool_calls": tool_calls},
+                                    tool_calls=tool_calls,
                                 )
                             except Exception:
                                 pass

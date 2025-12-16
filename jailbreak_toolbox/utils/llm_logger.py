@@ -30,6 +30,7 @@ def log_messages(
     model_name: str,
     messages: Iterable[Any],
     response: Optional[Any] = None,
+    tool_calls: Optional[Any] = None,
 ) -> None:
     """
     Append a single JSONL record for an LLM call.
@@ -43,6 +44,7 @@ def log_messages(
             "model": model_name,
             "messages": list(messages),
             "response": response,
+            "tool_calls": tool_calls,
         }
         line = json.dumps(entry, ensure_ascii=False)
 

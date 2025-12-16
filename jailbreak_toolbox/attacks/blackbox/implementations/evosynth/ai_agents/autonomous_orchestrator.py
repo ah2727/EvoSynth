@@ -161,6 +161,7 @@ class AutonomousOrchestrator:
                                 "messages": messages or [],
                                 "stream": False,
                                 "tools": kwargs.get("tools"),
+                                "tool_choice": kwargs.get("tool_choice"),
                                 "options": {}
                             }
 
@@ -188,7 +189,8 @@ class AutonomousOrchestrator:
 
                             data = await asyncio.to_thread(_post)
                             content = _OllamaCompatClient._extract_content(data)
-                            tool_calls = (data.get("message") or {}).get("tool_calls") or []
+                            tool_calls_raw = (data.get("message") or {}).get("tool_calls") or []
+                            tool_calls = _normalize_tool_calls(tool_calls_raw)
                             resp_obj = _OllamaCompatClient._RespObj(content, tool_calls=tool_calls)
                             try:
                                 print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]} tool_calls={len(tool_calls)}")
@@ -197,6 +199,7 @@ class AutonomousOrchestrator:
                                     model_name=model or getattr(self.outer, "model_name", "ollama-compat"),
                                     messages=messages or [],
                                     response={"content": content, "tool_calls": tool_calls},
+                                    tool_calls=tool_calls,
                                 )
                             except Exception:
                                 pass

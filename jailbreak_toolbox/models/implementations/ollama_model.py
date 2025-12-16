@@ -121,6 +121,7 @@ class OllamaModel(BaseModel):
                 model_name=self.model_name,
                 messages=messages,
                 response={"content": content, "tool_calls": tool_calls},
+                tool_calls=tool_calls,
             )
         except Exception:
             pass

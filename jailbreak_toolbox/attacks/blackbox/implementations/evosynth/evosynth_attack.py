@@ -9,6 +9,7 @@ the full power of the original adepttool_v2_agents multi-agent system.
 """
 
 from dataclasses import dataclass
+import json
 from typing import Any, List, Dict, Optional
 import asyncio
 import os
@@ -152,13 +153,16 @@ class EvosynthAttack(BaseAttack):
                     norm.append(tc)
                     continue
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                arguments = fn.get("arguments", tc.get("arguments", "{}")) if isinstance(fn, dict) else "{}"
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments)
                 norm.append(
                     SimpleNamespace(
                         id=tc.get("id", f"call_{i}") if isinstance(tc, dict) else f"call_{i}",
                         type=tc.get("type", "function") if isinstance(tc, dict) else "function",
                         function=SimpleNamespace(
                             name=fn.get("name", tc.get("name", "")) if isinstance(fn, dict) else "",
-                            arguments=fn.get("arguments", tc.get("arguments", "{}")) if isinstance(fn, dict) else "{}",
+                            arguments=arguments,
                         ),
                     )
                 )

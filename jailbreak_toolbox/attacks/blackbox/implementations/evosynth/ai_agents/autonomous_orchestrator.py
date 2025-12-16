@@ -4,6 +4,7 @@ Manages the complete attack workflow from reconnaissance to exploitation
 """
 
 from typing import List, Optional
+import json
 from datetime import datetime, UTC
 import uuid
 import asyncio
@@ -89,6 +90,31 @@ class AutonomousOrchestrator:
             or str(target_model_name).lower().startswith("ollama/")
             or str(judge_model_name).lower().startswith("ollama/")
         )
+
+        def _normalize_tool_calls(raw):
+            from types import SimpleNamespace
+            norm = []
+            if not raw:
+                return norm
+            for i, tc in enumerate(raw):
+                if isinstance(tc, SimpleNamespace):
+                    norm.append(tc)
+                    continue
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                arguments = fn.get("arguments", tc.get("arguments", "{}")) if isinstance(fn, dict) else "{}"
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments)
+                norm.append(
+                    SimpleNamespace(
+                        id=tc.get("id", f"call_{i}") if isinstance(tc, dict) else f"call_{i}",
+                        type=tc.get("type", "function") if isinstance(tc, dict) else "function",
+                        function=SimpleNamespace(
+                            name=fn.get("name", tc.get("name", "")) if isinstance(fn, dict) else "",
+                            arguments=arguments,
+                        ),
+                    )
+                )
+            return norm
 
         if using_ollama or (no_api_key and config.get("openai_client") is None):
             # Provide a lightweight OpenAI-compatible client that calls Ollama /api/chat

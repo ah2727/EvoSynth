@@ -47,6 +47,9 @@ class SessionLogger:
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_filename = os.path.join(self.cfg.logs_dir, f"session_{self.cfg.session_id}_{stamp}.log")
 
+        # Expose session log path so LLM logging can mirror into it live
+        os.environ["EVOSYNTH_SESSION_LOG"] = self.log_filename
+
         async with aiofiles.open(self.log_filename, "w", encoding="utf-8") as f:
             await f.write(f"Session Log - Session ID: {self.cfg.session_id}\n")
             await f.write(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")

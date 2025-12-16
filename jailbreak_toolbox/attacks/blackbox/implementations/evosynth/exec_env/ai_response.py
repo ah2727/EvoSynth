@@ -80,7 +80,21 @@ def generate_ai_response(
         # Normalize tuple-wrapped responses from shim clients
         if isinstance(response, tuple) and response:
             response = response[0]
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content.strip()
+
+        # Log request/response
+        try:
+            from jailbreak_toolbox.utils.llm_logger import log_messages
+            log_messages(
+                log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+                model_name=model_name,
+                messages=messages,
+                response=content,
+            )
+        except Exception:
+            pass
+
+        return content
         
     except ImportError:
         return "Error: OpenAI library not installed. Install with: pip install openai"

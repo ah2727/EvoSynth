@@ -12,6 +12,7 @@ from pprint import pformat
 from agents import Agent, function_tool, RunContextWrapper, OpenAIChatCompletionsModel, trace
 import requests
 from urllib.parse import urlparse, urlunparse
+from jailbreak_toolbox.utils.llm_logger import log_messages
 
 
 def _normalize_ollama_host(raw_host: str) -> str:
@@ -170,6 +171,12 @@ class AutonomousOrchestrator:
                             resp_obj = _OllamaCompatClient._RespObj(content)
                             try:
                                 print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]}")
+                                log_messages(
+                                    log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+                                    model_name=model or getattr(self.outer, "model_name", "ollama-compat"),
+                                    messages=messages or [],
+                                    response=content,
+                                )
                             except Exception:
                                 pass
                             return resp_obj

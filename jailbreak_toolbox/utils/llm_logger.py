@@ -13,8 +13,16 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 import json
 import threading
+import os
 
 _log_lock = threading.Lock()
+
+
+def _write_line(path: Path, line: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", buffering=1) as f:
+        f.write(line + "\n")
+        f.flush()
 
 
 def log_messages(
@@ -26,27 +34,29 @@ def log_messages(
     """
     Append a single JSONL record for an LLM call.
 
-    Args:
-        log_dir: Directory to place llm_messages.log (will be created if missing)
-        model_name: Name of the model used
-        messages: Prompt messages sent to the model
-        response: Optional response payload / text
+    Writes to the provided log_dir/llm_messages.log and also mirrors to ./logs/llm_messages.log
+    so tailing is predictable even if callers pass custom paths.
     """
     try:
-        path = Path(log_dir or "./logs") / "llm_messages.log"
-        path.parent.mkdir(parents=True, exist_ok=True)
-
         entry = {
             "ts": datetime.now(UTC).isoformat(),
             "model": model_name,
             "messages": list(messages),
             "response": response,
         }
-
         line = json.dumps(entry, ensure_ascii=False)
+
+        primary = Path(log_dir or "./logs") / "llm_messages.log"
+        mirror = Path("./logs/llm_messages.log")
+        session_path_env = os.getenv("EVOSYNTH_SESSION_LOG")
+        session_path = Path(session_path_env) if session_path_env else None
+
         with _log_lock:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            _write_line(primary, line)
+            if mirror.resolve() != primary.resolve():
+                _write_line(mirror, line)
+            if session_path and session_path.resolve() not in {primary.resolve(), mirror.resolve()}:
+                _write_line(session_path, line)
     except Exception:
         # Logging should never break the caller
         return

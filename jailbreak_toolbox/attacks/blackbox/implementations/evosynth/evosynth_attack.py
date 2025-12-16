@@ -36,6 +36,7 @@ from jailbreak_toolbox.models.base_model import BaseModel
 from jailbreak_toolbox.attacks.base_attack import AttackResult
 from jailbreak_toolbox.models.implementations.openai_model import OpenAIModel
 from jailbreak_toolbox.judges.implementations.llm_judge import LLMJudge
+from jailbreak_toolbox.utils.llm_logger import log_messages
 DEPENDENCIES_AVAILABLE = True
 
 
@@ -215,6 +216,12 @@ class EvosynthAttack(BaseAttack):
                             resp_obj = _OllamaCompatClient._RespObj(content)
                             try:
                                 print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]}")
+                                log_messages(
+                                    log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+                                    model_name=model or self.outer.model_name if hasattr(self.outer, "model_name") else "ollama-compat",
+                                    messages=messages or [],
+                                    response=content,
+                                )
                             except Exception:
                                 pass
                             return resp_obj

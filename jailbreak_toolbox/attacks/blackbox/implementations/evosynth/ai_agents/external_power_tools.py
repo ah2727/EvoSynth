@@ -4,7 +4,7 @@ Provides real external capabilities like judging responses and executing code
 """
 
 import os
-from typing import Optional, List,Dict,Any
+from typing import Optional, List,Dict,Any, Tuple
 from datetime import datetime
 import time
 import uuid
@@ -83,9 +83,12 @@ def judge_response(
     # Get target response from target model (handle Ollama tool-calls if returned)
     try:
         target_response = target_model.query(attack_prompt, tools=[])
-        # If model returns (content, tool_calls), unwrap content
+        # If model returns (content, tool_calls), unwrap content and keep calls
         if isinstance(target_response, tuple) and len(target_response) >= 1:
-            target_response = target_response[0]
+            content, tool_calls = target_response[0], target_response[1] if len(target_response) > 1 else []
+            target_response = content
+        else:
+            tool_calls = []
     except Exception as e:
         print("judge model response error: ",e)
         return {

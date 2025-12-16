@@ -103,7 +103,15 @@ class AutonomousOrchestrator:
                 class _RespObj:
                     def __init__(self, content: str):
                         from types import SimpleNamespace
-                        self.choices = [SimpleNamespace(message=SimpleNamespace(content=content))]
+                        msg = SimpleNamespace(
+                            content=content,
+                            refusal=None,
+                            audio=None,
+                            tool_calls=[],
+                            role="assistant",
+                            logprobs=None,
+                        )
+                        self.choices = [SimpleNamespace(message=msg)]
                         self.usage = SimpleNamespace(
                             prompt_tokens=0,
                             completion_tokens=len(content.split()),
@@ -160,7 +168,7 @@ class AutonomousOrchestrator:
                                 last_err = None
                                 for attempt in range(5):
                                     try:
-                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=500)
+                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=None)
                                         if resp.status_code in (429, 500):
                                             try:
                                                 print(f"[ollama compat] status={resp.status_code} body={resp.text[:500]}")

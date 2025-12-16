@@ -47,7 +47,7 @@ class OllamaModel(BaseModel):
         host: Optional[str] = None,
         system_message: str = "You are a helpful assistant.",
         temperature: float = 0.7,
-        timeout: float = 120.0,
+        timeout: float = None,
         **kwargs: Any,
     ):
         super().__init__(**kwargs)

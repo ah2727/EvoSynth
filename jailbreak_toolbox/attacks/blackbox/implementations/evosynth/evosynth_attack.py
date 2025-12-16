@@ -143,6 +143,12 @@ class EvosynthAttack(BaseAttack):
     def _setup_orchestrator(self):
         """Setup the autonomous orchestrator with proper configuration like the original."""
 
+        def _chat_endpoint(host: str) -> str:
+            h = host.rstrip("/")
+            if h.endswith("/v1"):
+                return f"{h}/chat/completions"
+            return f"{h}/api/chat"
+
         def _normalize_tool_calls(raw):
             from types import SimpleNamespace
             norm = []
@@ -240,7 +246,7 @@ class EvosynthAttack(BaseAttack):
                                 last_err = None
                                 for attempt in range(5):
                                     try:
-                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=None)
+                                        resp = requests.post(_chat_endpoint(self.outer.host), json=payload, timeout=None)
                                         if resp.status_code in (429, 500):
                                             try:
                                                 print(f"[ollama compat] status={resp.status_code} body={resp.text[:500]}")
@@ -534,16 +540,17 @@ __all__ = [
 ]
 
 # Version information
-__version__ = "1.0.0"
-__author__ = "Evosynth Team"
+__version__ = "0.0.0"
+__author__ = "Evosynth Team & ah2727"
 __description__ = "Multi-Agent Jailbreak Attack System for AI Security Research"
+
 def _looks_like_ollama(base_url: Optional[str], model_name: Optional[str] = None) -> bool:
     """Heuristic to detect Ollama endpoints."""
     if model_name and model_name.lower().startswith("ollama/"):
         return True
     if not base_url:
         return False
-    return any(sig in base_url for sig in ["ollama", "localhost:11434", "/api/chat", "/api/generate"])
+    return any(sig in base_url for sig in ["ollama", "localhost:11434", "192.168.100.37:10101" , "/api/chat", "/api/generate"])
 
 
 def _normalize_ollama_host(raw_host: Optional[str]) -> str:

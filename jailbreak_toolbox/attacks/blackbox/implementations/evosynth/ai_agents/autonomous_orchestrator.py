@@ -116,6 +116,12 @@ class AutonomousOrchestrator:
                 )
             return norm
 
+        def _chat_endpoint(host: str) -> str:
+            h = host.rstrip("/")
+            if h.endswith("/v1"):
+                return f"{h}/chat/completions"
+            return f"{h}/api/chat"
+
         if using_ollama or (no_api_key and config.get("openai_client") is None):
             # Provide a lightweight OpenAI-compatible client that calls Ollama /api/chat
             class _OllamaCompatClient:
@@ -196,7 +202,7 @@ class AutonomousOrchestrator:
                                 last_err = None
                                 for attempt in range(5):
                                     try:
-                                        resp = requests.post(f"{self.outer.host}/api/chat", json=payload, timeout=None)
+                                        resp = requests.post(_chat_endpoint(self.outer.host), json=payload, timeout=None)
                                         if resp.status_code in (429, 500):
                                             try:
                                                 print(f"[ollama compat] status={resp.status_code} body={resp.text[:500]}")

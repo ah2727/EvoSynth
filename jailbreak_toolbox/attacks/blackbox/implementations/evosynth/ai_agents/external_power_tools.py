@@ -18,6 +18,7 @@ from agents import function_tool, RunContextWrapper
 from httpx import get
 from openai import base_url
 import requests
+import json
 from jailbreak_toolbox.utils.net_resilience import (
     GlobalLimiter,
     CircuitBreaker,
@@ -1025,3 +1026,33 @@ def test_tool_effectiveness(
             "error": str(e),
             "stored_in_session": True,
         }
+@function_tool
+def access_runcontext_history(ctx: RunContextWrapper, history_depth: int = 5, max_total_chars: int = 4000) -> dict:
+    """
+    Return recent context history for agents. Mirrors output to tools log for observability.
+    """
+    try:
+        history = ctx.context.history[-history_depth:] if hasattr(ctx.context, "history") else []
+        history_text = "\n".join(map(str, history))[:max_total_chars]
+        result = {
+            "history_depth": history_depth,
+            "max_total_chars": max_total_chars,
+            "history": history_text,
+            "success": True,
+        }
+    except Exception as e:
+        result = {
+            "success": False,
+            "error": str(e),
+            "history_depth": history_depth,
+            "max_total_chars": max_total_chars,
+        }
+
+    _log_tool(
+        model=getattr(ctx.context, "target_model", None),
+        prompt=f"access_runcontext_history(depth={history_depth}, max_chars={max_total_chars})",
+        response=result,
+        tool_calls=None,
+        log_dir=os.getenv("OPENAI_LOG_PATH") or "./logs",
+    )
+    return result

@@ -9,7 +9,7 @@ from urllib.parse import urlparse, urlunparse
 def _normalize_ollama_host(raw_host: Optional[str]) -> str:
     """
     Ensure host has a scheme and strip any trailing Ollama endpoint paths
-    (e.g., '/api/chat' or '/api/generate') so we can append '/api/chat' safely.
+    (e.g., '/api/chat', '/api/generate', '/v1/chat/completions') so we can append the right endpoint safely.
     """
     if not raw_host:
         raw_host = "http://localhost:11434"
@@ -18,13 +18,20 @@ def _normalize_ollama_host(raw_host: Optional[str]) -> str:
 
     parsed = urlparse(raw_host)
     path = parsed.path.rstrip("/")
-    if path.endswith("/api/chat"):
-        path = path[: -len("/api/chat")]
-    elif path.endswith("/api/generate"):
-        path = path[: -len("/api/generate")]
+    for suffix in ("/api/chat", "/api/generate", "/v1/chat/completions"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
 
     parsed = parsed._replace(path=path, params="", query="", fragment="")
     return urlunparse(parsed).rstrip("/")
+
+
+def _chat_endpoint(host: str) -> str:
+    """Return the appropriate chat endpoint for Ollama host (native or OpenAI-compatible)."""
+    h = host.rstrip("/")
+    if h.endswith("/v1"):
+        return f"{h}/chat/completions"
+    return f"{h}/api/chat"
 
 from ..base_model import BaseModel
 from ...core.registry import model_registry
@@ -86,7 +93,7 @@ class OllamaModel(BaseModel):
         **kwargs: Any,
     ) -> str:
         # Ollama chat endpoint
-        url = f"{self.host}/api/chat"
+        url = _chat_endpoint(self.host)
         messages = self._build_messages(text_input, maintain_history)
         payload: Dict[str, Any] = {
             "model": self.model_name,

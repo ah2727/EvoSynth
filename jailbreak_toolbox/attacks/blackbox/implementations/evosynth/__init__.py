@@ -15,6 +15,6 @@ __all__ = [
 ]
 
 # Version information
-__version__ = "1.0.0"
-__author__ = "Evosynth Team"
+__version__ = "0.0.0"
+__author__ = "Evosynth Team & ah2727"
 __description__ = "Multi-Agent Jailbreak Attack System for AI Security Research"

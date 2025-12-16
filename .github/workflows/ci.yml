@@ -34,7 +34,7 @@ jobs:
           python - <<'PY'
           import importlib.util, subprocess, sys
           if importlib.util.find_spec("pytest") is None:
-          subprocess.check_call([sys.executable, "-m", "pip", "install", "pytest"])
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "pytest"])
           PY
 
       - name: Run tests

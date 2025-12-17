@@ -254,7 +254,15 @@ class EvosynthAttack(BaseAttack):
                             Async-compatible wrapper that mimics OpenAI chat completions response.
                             Uses a thread to keep requests.post blocking call off the event loop.
                             """
-                            import requests, asyncio
+                            import requests, asyncio, time
+
+                            from openai.types.chat import ChatCompletion, ChatCompletionMessage
+                            from openai.types.chat.chat_completion import Choice
+                            from openai.types.chat.chat_completion_message_function_tool_call import (
+                                Function as ToolFunction,
+                            )
+                            from openai.types.chat import ChatCompletionMessageToolCall
+                            from openai.types.completion_usage import CompletionUsage
 
                             payload = {
                                 "model": model,
@@ -302,7 +310,54 @@ class EvosynthAttack(BaseAttack):
                                     msg = (choices[0] or {}).get("message") or {}
                                     tool_calls_raw = msg.get("tool_calls") or []
                             tool_calls = _normalize_tool_calls(tool_calls_raw)
-                            resp_obj = _OllamaCompatClient._RespObj(content, tool_calls=tool_calls)
+                            # Build a real ChatCompletion so openai-agents' isinstance checks pass
+                            def _to_tool_call(tc):
+                                try:
+                                    fn = getattr(tc, "function", {}) or {}
+                                    if isinstance(fn, dict):
+                                        name = fn.get("name", "")
+                                        arguments = fn.get("arguments", "{}")
+                                    else:
+                                        name = getattr(fn, "name", "") or ""
+                                        arguments = getattr(fn, "arguments", "{}")
+                                    if isinstance(arguments, dict):
+                                        arguments = json.dumps(arguments)
+                                    return ChatCompletionMessageToolCall(
+                                        id=getattr(tc, "id", "") or "",
+                                        type=getattr(tc, "type", "function") or "function",
+                                        function=ToolFunction(name=name, arguments=str(arguments)),
+                                    )
+                                except Exception:
+                                    return None
+
+                            tool_calls_models = [tc for tc in (_to_tool_call(tc) for tc in tool_calls) if tc]
+                            msg = ChatCompletionMessage(
+                                role="assistant",
+                                content=content,
+                                tool_calls=tool_calls_models or None,
+                            )
+                            resp_obj = ChatCompletion(
+                                id=f"ollama-compat-{int(time.time())}",
+                                choices=[
+                                    Choice(
+                                        index=0,
+                                        finish_reason="stop",
+                                        message=msg,
+                                    )
+                                ],
+                                created=int(time.time()),
+                                model=str(model or getattr(self.outer, "model_name", "ollama-compat")),
+                                object="chat.completion",
+                                system_fingerprint=None,
+                                service_tier=None,
+                                usage=CompletionUsage(
+                                    prompt_tokens=0,
+                                    completion_tokens=len(content.split()),
+                                    total_tokens=len(content.split()),
+                                    prompt_tokens_details=None,
+                                    completion_tokens_details=None,
+                                ),
+                            )
                             try:
                                 print(f"[OllamaCompatClient] returning resp_obj type={type(resp_obj)} content={content[:80]} tool_calls={len(tool_calls)}")
                                 log_messages(

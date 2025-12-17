@@ -155,6 +155,7 @@ def make_openai_model_from_config(cfg: Dict[str, Any], api_key: str, base_url: s
         (resolved_base_url and (
             "ollama" in resolved_base_url
             or "localhost:11434" in resolved_base_url
+            or "localhost:10101"
             or resolved_base_url.endswith("/api/chat")
             or resolved_base_url.endswith("/api/generate")
         ))
@@ -412,7 +413,7 @@ def process_wrapper(model_config: Dict[str, Any], attack_data: tuple, args_dict:
     from pathlib import Path
 
     # If running in Ollama mode, strip remote API keys to avoid accidental OpenAI calls
-    is_ollama = ("ollama" in (args_dict.get("base_url") or "")) or ("http://192.168.100.37:10101" in (args_dict.get("base_url") or "")) \
+    is_ollama = ("ollama" in (args_dict.get("base_url") or "")) or (all(i in (args_dict.get("base_url") or "") for i in ["http://192.168.100.37:10101","http://localhost:10101"])) \
         or str(args_dict.get("attacker_model", "")).lower().startswith("ollama/")
     if is_ollama:
         os.environ.pop("OPENAI_API_KEY", None)

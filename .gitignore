@@ -76,3 +76,4 @@ async_logs/
 asset/sec/
 # Original PDF (using PNG version)
 asset/diagram.pdf
+venv/
